@@ -106,7 +106,8 @@ def main():
 
     wandb.run.name = run_name
 
-    device = torch.device("cuda") if torch.cuda.is_available() and args.devices else torch.device("cpu")
+    device = torch.device("cuda") if torch.cuda.is_available() and args.devices else \
+        torch.device('mps') if torch.mps.is_available() else torch.device("cpu")
     args.save_path = f"exps/{run_name}-{now}"
     os.makedirs(args.save_path, exist_ok=True)
     if args.resume is not None:

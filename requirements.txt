@@ -1,0 +1,28 @@
+numpy
+scipy
+scikit-learn
+matplotlib
+pandas
+pillow
+tqdm
+pyyaml  
+configargparse
+loguru
+networkx
+ogb
+wandb
+torch
+torchvision
+torchaudio
+# torch-scatter
+# torch-sparse
+# torch-cluster
+# torch-spline-conv
+torch-geometric
+ase
+h5py
+jinja2
+joblib
+numba
+requests
+rdflib
