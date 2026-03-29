@@ -5,7 +5,8 @@ matplotlib
 pandas
 pillow
 tqdm
-pyyaml  
+pyyaml
+argparse
 configargparse
 loguru
 networkx
@@ -14,10 +15,6 @@ wandb
 torch
 torchvision
 torchaudio
-# torch-scatter
-# torch-sparse
-# torch-cluster
-# torch-spline-conv
 torch-geometric
 ase
 h5py
@@ -26,3 +23,5 @@ joblib
 numba
 requests
 rdflib
+ipykernel
+pynvim
