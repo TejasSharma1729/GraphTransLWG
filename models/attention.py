@@ -41,6 +41,7 @@ class AttentionLayer(Module):
             attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
             device: The device to run the layer on
         """
+        super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.num_heads: int = num_heads # number of attention heads
         self.head_dim: int = head_dim # dimension of each attention head
@@ -49,7 +50,7 @@ class AttentionLayer(Module):
         self.key_weights = nn.Linear(embed_dim, num_heads * head_dim)   # linear transformation for key embeddings
         self.value_weights = nn.Linear(embed_dim, num_heads * head_dim) # linear transformation for value embeddings
         self.update_weights = nn.Linear(num_heads * head_dim, embed_dim) # linear transformation for output embeddings
-        self.device = device # device to run the layer on
+        self.device: torch.device = device # device to run the layer on
         self.to(device) # move the layer to the device
     
     def forward(
@@ -71,7 +72,7 @@ class AttentionLayer(Module):
         
         Args:
             input_graphs: The input graphs (or a single graph)
-            input_embeddings [net_num_vertices, embed_dim]: The input embeddings for all vertices of all graphs, in order.
+            input_embeddings: [net_num_vertices, embed_dim] The input embeddings for all vertices of all graphs, in order.
         
         Returns:
             The output embeddings.
@@ -118,9 +119,10 @@ class AttentionLayer(Module):
                 attn_factors = torch.max(attn_factors, factor * attn_mask)
         
         # The main (GPU-heavy) computation
-        query_embeddings: Tensor = self.query_weights(input_embeddings)
-        key_embeddings: Tensor = self.key_weights(input_embeddings)
-        value_embeddings: Tensor = self.value_weights(input_embeddings)
+        attn_shape = torch.Size([self.num_heads, net_num_vertices, self.head_dim])
+        query_embeddings: Tensor = self.query_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous()
+        key_embeddings: Tensor = self.key_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous() 
+        value_embeddings: Tensor = self.value_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous()
 
         # GPU work: flash attention with floating attention mask (log for proper float masking)
         attn_output: Tensor = F.scaled_dot_product_attention(
@@ -133,6 +135,8 @@ class AttentionLayer(Module):
         )
 
         # Finally, compute the output embeddings with a linear transformation.
+        update_in_shape = torch.Size([net_num_vertices, self.num_heads * self.head_dim])
+        attn_output = attn_output.transpose(0, 1).view(update_in_shape).contiguous()
         out_embeddings: Tensor = self.update_weights(attn_output)
         assert out_embeddings.shape == torch.Size([net_num_vertices, self.embed_dim])
         return out_embeddings

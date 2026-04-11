@@ -38,12 +38,13 @@ class GNNLayer(Module):
             embed_dim: The embedding dimension.
             device: The device to run the layer on.
         """
+        super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.node_weights = nn.Linear(embed_dim, embed_dim) # linear transformation for node embeddings
         self.edge_weights = nn.Linear(2 * embed_dim, embed_dim) # linear transformation for edge embeddings 
         self.embed_gelu = nn.GELU() # GELU activation function
         self.embed_update = nn.Linear(3 * embed_dim, embed_dim) # linear transformation for output embeddings
-        self.device = device # device to run the layer on
+        self.device: torch.device = device # device to run the layer on
         self.to(device) # move the layer to the device
     
     def forward(
@@ -61,7 +62,7 @@ class GNNLayer(Module):
 
         Args:
             input_graphs: The input graphs (or a single graph)
-            input_embeddings [net_num_vertices, embed_dim]: The input embeddings for all vertices of all graphs, in order.
+            input_embeddings; [net_num_vertices, embed_dim] The input embeddings for all vertices of all graphs, in order.
         
         Returns:
             The output embeddings.
@@ -136,7 +137,7 @@ class GNN(Module):
         self.layers = ModuleList([
             GNNLayer(embed_dim, device) for layer in range(num_layers)
         ]) # list of GNN layers
-        self.device = device # device to run the GNN on
+        self.device: torch.device = device # device to run the GNN on
         self.to(device) # move the GNN to the device
     
     def forward(

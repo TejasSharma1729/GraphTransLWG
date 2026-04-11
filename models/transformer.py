@@ -1,19 +1,28 @@
-# This transformer implementation uses the gnn and attention layers defined in gnn.py and attention.py, respectively.
-# The transformer consists of multiple layers, each of which consists of an attention layer and a gnn layer. The output of each layer is fed into the next layer, and the final output is the output of the last layer.
+#!/usr/bin/env python3
 
+from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
+
+import torch_geometric
 import torch
-import torch.nn as nn
-from torch import Tensor
-from torch.nn import Module, Linear
+from torch import nn, tensor, Tensor, autograd, optim, cuda, mps, cpu, distributions
+from torch.nn import Module, Parameter, ModuleList, ModuleDict, functional as F
+from torch.optim import Optimizer, Adam, AdamW, SGD, RMSprop, lr_scheduler
+
+import torch_geometric
+from torch_geometric.nn import MessagePassing, GCNConv, SAGEConv, GATConv, GINConv, GIN
 from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
-from .gnn import GNNLayer
+
+from .gnn import GNNLayer, GNN
 from .attention import AttentionLayer
-from typing import List, Optional
+
 
 """
-Transformer layer.
-This consists of an attention layer and a gnn layer. The output of the attention layer is fed into the gnn layer, and the output of the gnn layer is fed into the next transformer layer.
+Transformer layer. This consists of a single GNN layer, followed by a single attention layer.
+The GNN itself may contain multiple layers.
+
+This allows fine tuning not just the size but also the number of GNN layers and the attention distance factors 
+for the attention layer, which are important hyperparameters.
 """
 class TransformerLayer(Module):
     def __init__(
@@ -21,8 +30,8 @@ class TransformerLayer(Module):
             embed_dim: int,
             num_heads: int,
             head_dim: int,
+            num_gnn_layers: int,
             attn_distance_factors: List[float] | None,
-            gnn_hidden_dim: int,
             device: torch.device
     ) -> None:
         """
@@ -32,13 +41,18 @@ class TransformerLayer(Module):
             embed_dim: The embedding dimension
             num_heads: The number of attention heads
             head_dim: The dimension of each attention head
+            num_gnn_layers: The number of gnn layers in the gnn layer
             attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
-            gnn_hidden_dim: The hidden dimension of the gnn layer
             device: The device to run the layer on
         """
         super().__init__()
+        self.embed_dim: int = embed_dim # dimension of the input and output embeddings
+        self.num_heads: int = num_heads # number of attention heads
+        self.head_dim: int = head_dim # dimension of each attention head
+        self.num_gnn_layers: int = num_gnn_layers # number of gnn layers
+        self.attn_distance_factors: List[float] | None = attn_distance_factors # for weighted attention, preferential to neighbors
         self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, device) # attention layer
-        self.gnn_layer = GNNLayer(embed_dim, gnn_hidden_dim, device) # gnn layer
+        self.gnn_layer = GNN(embed_dim, num_gnn_layers, device) # gnn layer
         self.device = device # device to run the layer on
         self.to(device) # move the layer to the device
 
@@ -54,14 +68,24 @@ class TransformerLayer(Module):
 
         Args:
             input_graphs: The input graphs (or a single graph)
-            input_embeddings [net_num_vertices, embed_dim]: The input embeddings for all vertices of all graphs, in order.
+            input_embeddings: [net_num_vertices, embed_dim] The input embeddings for all vertices of all graphs, in order.
         Returns:
             The output embeddings.
         """
-        attention_output = self.attention_layer(input_graphs, input_embeddings) # output of the attention layer
-        gnn_output = self.gnn_layer(input_graphs, attention_output) # output of the gnn layer
-        return gnn_output
-    
+        gnn_output = self.gnn_layer(input_graphs, input_embeddings) # output of the gnn layer
+        attention_output = self.attention_layer(input_graphs, gnn_output) # output of the attention layer
+        return attention_output
+
+
+"""
+Graph transformer. This consists of multiple transformer layers, each containing a GNN followed by an Attention layer.
+The output of each layer is fed into the next layer, and the final output is the output.
+
+Note that this does not include the initial node embeddings or any unembeddings / algorithms after the output.
+
+This allows fine tuning not just the size but also the number of GNN layers and the attention distance factors 
+for each layer, which are important hyperparameters (they can be different for different layers).
+"""
 class Transformer(Module):
     def __init__(
             self,
@@ -69,8 +93,8 @@ class Transformer(Module):
             embed_dim: int,
             num_heads: int,
             head_dim: int,
-            attn_distance_factors: List[float] | None,
-            gnn_hidden_dim: int,
+            num_gnn_layers: int | List[int],
+            attn_distance_factors: List[List[float] | None] | None,
             device: torch.device
     ) -> None:
         """
@@ -81,13 +105,41 @@ class Transformer(Module):
             embed_dim: The embedding dimension
             num_heads: The number of attention heads
             head_dim: The dimension of each attention head
-            attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
-            gnn_hidden_dim: The hidden dimension of the gnn layer
+            num_gnn_layers: The number of gnn layers in the gnn layer per layer
+            attn_distance_factors: The attention distance factors (hyperparameters for weighing attention) per layer
             device: The device to run the layer on
         """
         super().__init__()
-        self.layers = nn.ModuleList([TransformerLayer(embed_dim, num_heads, head_dim, attn_distance_factors, gnn_hidden_dim, device) for _ in range(num_layers)]) # list of transformer layers
-        self.device = device # device to run the layer on
+        self.num_layers: int = num_layers # number of transformer layers
+        self.embed_dim: int = embed_dim # dimension of the input and output embeddings
+        self.num_heads: int = num_heads # number of attention heads
+        self.head_dim: int = head_dim # dimension of each attention head
+        self.attn_distance_factors: List[List[float] | None] # list of attention distance factors for each layer
+        
+        if attn_distance_factors is None:
+            self.attn_distance_factors = [None] * num_layers
+        else:
+            assert len(attn_distance_factors) == num_layers
+            self.attn_distance_factors = attn_distance_factors
+        
+        self.num_gnn_layers: List[int] # list of number of gnn layers for each transformer layer
+        if isinstance(num_gnn_layers, int):
+            self.num_gnn_layers = [num_gnn_layers] * num_layers
+        else:
+            assert len(num_gnn_layers) == num_layers
+            self.num_gnn_layers = num_gnn_layers
+        
+        self.layers = nn.ModuleList([
+            TransformerLayer(
+                embed_dim,
+                num_heads,
+                head_dim,
+                self.num_gnn_layers[i],
+                self.attn_distance_factors[i],
+                device
+            ) for i in range(num_layers)
+        ]) # list of transformer layers
+        self.device: torch.device = device # device to run the layer on
         self.to(device) # move the layer to the device
 
     def forward(
@@ -102,11 +154,11 @@ class Transformer(Module):
 
         Args:
             input_graphs: The input graphs (or a single graph)
-            input_embeddings [net_num_vertices, embed_dim]: The input embeddings for all vertices of all graphs, in order.
+            input_embeddings: [net_num_vertices, embed_dim] The input embeddings for all vertices of all graphs, in order.
         Returns:
             The output embeddings.
         """
-        x = input_embeddings
+        embeddings = input_embeddings
         for layer in self.layers:
-            x = layer(input_graphs, x)
-        return x
+            embeddings = layer(input_graphs, embeddings)
+        return embeddings
