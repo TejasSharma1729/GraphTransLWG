@@ -14,15 +14,15 @@ from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
 
-"""
-Graph attention layer.
-
-This computes the attention of matrices similar to attention in transformer networks.
-The twist is that attention is zero for nodes not reachable from each other, and
-there is an option to have weighted attention based on distance (number of hops) between nodes, 
-but those distance attention factors are fixed during initialization.
-"""
 class AttentionLayer(Module):
+    """
+    Graph attention layer.
+
+    This computes the attention of matrices similar to attention in transformer networks.
+    The twist is that attention is zero for nodes not reachable from each other, and
+    there is an option to have weighted attention based on distance (number of hops) between nodes, 
+    but those distance attention factors are fixed during initialization.
+    """
     def __init__(
             self,
             embed_dim: int,

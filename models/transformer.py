@@ -15,16 +15,17 @@ from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense
 
 from .gnn import GNNLayer, GNN
 from .attention import AttentionLayer
+from .mlp import MLP
 
 
-"""
-Transformer layer. This consists of a single GNN layer, followed by a single attention layer.
-The GNN itself may contain multiple layers.
-
-This allows fine tuning not just the size but also the number of GNN layers and the attention distance factors 
-for the attention layer, which are important hyperparameters.
-"""
 class TransformerLayer(Module):
+    """
+    Transformer layer. This consists of a single GNN layer, followed by a single attention layer, then an MLP.
+    The GNN itself may contain multiple layers, and so may the MLP. But there is only one attention layer.
+
+    This allows chosing not just the size but also the number of GNN layers and MLP layers and
+    the attention distance factors for the attention layer, which are important hyperparameters.
+    """
     def __init__(
             self,
             embed_dim: int,
@@ -32,6 +33,7 @@ class TransformerLayer(Module):
             head_dim: int,
             num_gnn_layers: int,
             attn_distance_factors: List[float] | None,
+            num_mlp_layers: int,
             device: torch.device
     ) -> None:
         """
@@ -43,6 +45,7 @@ class TransformerLayer(Module):
             head_dim: The dimension of each attention head
             num_gnn_layers: The number of gnn layers in the gnn layer
             attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
+            num_mlp_layers: The number of MLP layers in the MLP layer
             device: The device to run the layer on
         """
         super().__init__()
@@ -51,8 +54,10 @@ class TransformerLayer(Module):
         self.head_dim: int = head_dim # dimension of each attention head
         self.num_gnn_layers: int = num_gnn_layers # number of gnn layers
         self.attn_distance_factors: List[float] | None = attn_distance_factors # for weighted attention, preferential to neighbors
+        self.num_mlp_layers: int = num_mlp_layers # number of mlp layers
         self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, device) # attention layer
         self.gnn_layer = GNN(embed_dim, num_gnn_layers, device) # gnn layer
+        self.mlp_layer = MLP(embed_dim, num_mlp_layers, device) # mlp layer
         self.device = device # device to run the layer on
         self.to(device) # move the layer to the device
 
@@ -74,19 +79,20 @@ class TransformerLayer(Module):
         """
         gnn_output = self.gnn_layer(input_graphs, input_embeddings) # output of the gnn layer
         attention_output = self.attention_layer(input_graphs, gnn_output) # output of the attention layer
-        return attention_output
+        mlp_output = self.mlp_layer(attention_output) # output of the mlp layer
+        return mlp_output
 
 
-"""
-Graph transformer. This consists of multiple transformer layers, each containing a GNN followed by an Attention layer.
-The output of each layer is fed into the next layer, and the final output is the output.
-
-Note that this does not include the initial node embeddings or any unembeddings / algorithms after the output.
-
-This allows fine tuning not just the size but also the number of GNN layers and the attention distance factors 
-for each layer, which are important hyperparameters (they can be different for different layers).
-"""
 class Transformer(Module):
+    """
+    Graph transformer. This consists of multiple transformer layers, each containing a GNN, an Attention layer, and an MLP.
+    The output of each layer is fed into the next layer, and the final output is the output.
+
+    Note that this does not include the initial node embeddings or any unembeddings / algorithms after the output.
+
+    This allows fine tuning not just the size but also the number of GNN layers, MLP layers and the attention distance factors 
+    for each layer, which are important hyperparameters (they can be different for different layers).
+    """
     def __init__(
             self,
             num_layers: int,
@@ -95,6 +101,7 @@ class Transformer(Module):
             head_dim: int,
             num_gnn_layers: int | List[int],
             attn_distance_factors: List[List[float] | None] | None,
+            num_mlp_layers: int | List[int],
             device: torch.device
     ) -> None:
         """
@@ -107,6 +114,7 @@ class Transformer(Module):
             head_dim: The dimension of each attention head
             num_gnn_layers: The number of gnn layers in the gnn layer per layer
             attn_distance_factors: The attention distance factors (hyperparameters for weighing attention) per layer
+            num_mlp_layers: The number of MLP layers in the MLP layer per layer
             device: The device to run the layer on
         """
         super().__init__()
@@ -114,13 +122,6 @@ class Transformer(Module):
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.num_heads: int = num_heads # number of attention heads
         self.head_dim: int = head_dim # dimension of each attention head
-        self.attn_distance_factors: List[List[float] | None] # list of attention distance factors for each layer
-        
-        if attn_distance_factors is None:
-            self.attn_distance_factors = [None] * num_layers
-        else:
-            assert len(attn_distance_factors) == num_layers
-            self.attn_distance_factors = attn_distance_factors
         
         self.num_gnn_layers: List[int] # list of number of gnn layers for each transformer layer
         if isinstance(num_gnn_layers, int):
@@ -128,7 +129,21 @@ class Transformer(Module):
         else:
             assert len(num_gnn_layers) == num_layers
             self.num_gnn_layers = num_gnn_layers
+
+        self.attn_distance_factors: List[List[float] | None] # list of attention distance factors for each layer
+        if attn_distance_factors is None:
+            self.attn_distance_factors = [None] * num_layers
+        else:
+            assert len(attn_distance_factors) == num_layers
+            self.attn_distance_factors = attn_distance_factors
         
+        self.num_mlp_layers: List[int] # list of number of mlp layers for each transformer layer
+        if isinstance(num_mlp_layers, int):
+            self.num_mlp_layers = [num_mlp_layers] * num_layers
+        else:
+            assert len(num_mlp_layers) == num_layers
+            self.num_mlp_layers = num_mlp_layers
+
         self.layers = nn.ModuleList([
             TransformerLayer(
                 embed_dim,
@@ -136,6 +151,7 @@ class Transformer(Module):
                 head_dim,
                 self.num_gnn_layers[i],
                 self.attn_distance_factors[i],
+                self.num_mlp_layers[i],
                 device
             ) for i in range(num_layers)
         ]) # list of transformer layers

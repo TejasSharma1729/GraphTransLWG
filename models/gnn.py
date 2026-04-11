@@ -14,18 +14,18 @@ from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
 
-"""
-A single layer in the GNN consists of the following steps:
-1. For each vertex, compute a node embedding by applying a linear transformation to the input embedding
-2. For each edge, compute an edge embedding by applying a linear transformation to the concatenation of the 
-        node embeddings of the two vertices connected by the edge
-3. For each vertex, compute a pre-GELU embedding by concatenating the node embedding of the vertex, 
-        the sum of the node embeddings of the neighboring vertices, 
-        and the sum of the edge embeddings of the edges connected to the vertex
-4. For each vertex, compute a post-GELU embedding by applying the GELU activation function
-5. For each vertex, compute the output embedding by applying a linear transformation to the post-GELU embedding
-"""
 class GNNLayer(Module):
+    """
+    A single layer in the GNN consists of the following steps:
+    1. For each vertex, compute a node embedding by applying a linear transformation to the input embedding
+    2. For each edge, compute an edge embedding by applying a linear transformation to the concatenation of the 
+            node embeddings of the two vertices connected by the edge
+    3. For each vertex, compute a pre-GELU embedding by concatenating the node embedding of the vertex, 
+            the sum of the node embeddings of the neighboring vertices, 
+            and the sum of the edge embeddings of the edges connected to the vertex
+    4. For each vertex, compute a post-GELU embedding by applying the GELU activation function
+    5. For each vertex, compute the output embedding by applying a linear transformation to the post-GELU embedding
+    """
     def __init__(
         self,
         embed_dim: int,
@@ -113,16 +113,16 @@ class GNNLayer(Module):
         return out_embeddings
         
         
-"""
-The full GNN consists of multiple layers of type GNNLayer.
-
-Each GNN layer compute the node embeddings, edge embeddings and concatenates them with the
-sum of neighbors' node embeddings (per vertex) before applying the GELU activation function.
-A final linear transformation is applied to the post-GELU embeddings to get the output embeddings.
-
-This is repeated for each layer in the GNN.
-"""
 class GNN(Module):
+    """
+    The full GNN consists of multiple layers of type GNNLayer.
+
+    Each GNN layer compute the node embeddings, edge embeddings and concatenates them with the
+    sum of neighbors' node embeddings (per vertex) before applying the GELU activation function.
+    A final linear transformation is applied to the post-GELU embeddings to get the output embeddings.
+
+    This is repeated for each layer in the GNN.
+    """
     def __init__(
         self,
         embed_dim: int,
