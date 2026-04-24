@@ -141,3 +141,8 @@ cython_debug/
 wandb
 .vscode
 exps
+
+# Datasets
+data/
+dataset/
+datasets/

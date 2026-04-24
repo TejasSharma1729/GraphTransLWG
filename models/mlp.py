@@ -2,11 +2,12 @@
 
 from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
 
-import torch_geometric
 import torch
 from torch import nn, tensor, Tensor, autograd, optim, cuda, mps, cpu, distributions
 from torch.nn import Module, Parameter, ModuleList, ModuleDict, functional as F
 from torch.optim import Optimizer, Adam, AdamW, SGD, RMSprop, lr_scheduler
+from torch.utils.data import Dataset as TorchDataset, DataLoader as TorchDataLoader
+
 
 import torch_geometric
 from torch_geometric.nn import MessagePassing, GCNConv, SAGEConv, GATConv, GINConv, GIN
