@@ -19,9 +19,7 @@ from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
 import ogb
-from ogb.linkproppred import LinkPropPredDataset, PygLinkPropPredDataset, DglLinkPropPredDataset
-from ogb.nodeproppred import NodePropPredDataset, PygNodePropPredDataset, DglNodePropPredDataset
-from ogb.graphproppred import GraphPropPredDataset, PygGraphPropPredDataset, DglGraphPropPredDataset
+from ogb.graphproppred import GraphPropPredDataset, PygGraphPropPredDataset
 
 def get_graph_dataset(name: str) -> TorchDataset[Data]:
     """
@@ -39,8 +37,24 @@ def get_graph_dataset(name: str) -> TorchDataset[Data]:
     """
     return PygGraphPropPredDataset(name=name, root=DATASET_DIR)
 
-# MOLHIV = get_graph_dataset("ogbg-molhiv")
-# CODE2 = get_graph_dataset("ogbd-code2")
-# MOLPCBA = get_graph_dataset("ogbg-molpcba")
-# MOLESOL = get_graph_dataset("ogbg-molesol")
-# MOLLIPO = get_graph_dataset("ogbg-mollipo")
+if __name__ == "__main__":
+    print("==== LOADING OPEN GRAPH BENCHMARK DATASETS ====")
+    print("Loading ogbg-molhiv dataset...")
+    MOLHIV = get_graph_dataset("ogbg-molhiv")
+    print("Loading ogbg-code2 dataset...")
+    CODE2 = get_graph_dataset("ogbg-code2")
+    print("Loading ogbg-molpcba dataset...")
+    MOLPCBA = get_graph_dataset("ogbg-molpcba")
+    print("Loading ogbg-molesol dataset...")
+    MOLESOL = get_graph_dataset("ogbg-molesol")
+    print("Loading ogbg-mollipo dataset...")
+    MOLLIPO = get_graph_dataset("ogbg-mollipo")
+    print("NOTE: ogbg-ppa is not loaded since it is too large, and kills the process")
+    print()
+
+    print("==== EXAMPLE GRAPHS FROM THE DATASETS ====")
+    print(f"ogbg-code dataset has {CODE2.__len__()} graphs")
+    datapoint: Data = CODE2[0]
+    print(f"An example graph from ogbg-code dataset: {datapoint}")
+    print(f"This has {datapoint.num_nodes} nodes and {datapoint.edge_index.shape[1]} edges")
+    print()
