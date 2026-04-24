@@ -97,9 +97,10 @@ class AttentionLayer(Module):
         for i, graph in enumerate(input_graphs):
             assert graph.edge_index is not None
             assert graph.edge_index.shape == torch.Size([2, graph.edge_index.shape[1]])
-            prev_num_vertices += num_vertices[i]
+            offset = prev_num_vertices
             for (start, end) in zip(graph.edge_index[0], graph.edge_index[1]):
-                base_attn_mask[start + prev_num_vertices, end + prev_num_vertices] = 1.0
+                base_attn_mask[start + offset, end + offset] = 1.0
+            prev_num_vertices += num_vertices[i]
         
         # The mask that is acutally used for attention.
         attn_factors: Tensor = torch.eye(net_num_vertices)

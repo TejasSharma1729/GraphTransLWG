@@ -100,11 +100,11 @@ class GNNLayer(Module):
         # Move embeddings to pre-GELU embeddings 
         # (concatenation of node embedding, sum of neighbors' node embeddings and sum of edge embeddings)
         pre_gelu_embeddings: Tensor = torch.zeros((net_num_vertices, 3 * self.embed_dim))
-        for i in range(num_vertices.__len__()):
+        for i in range(sum(num_vertices)):
             pre_gelu_embeddings[i, :self.embed_dim] = node_embeddings[i]
-        for (start, end) in zip(edge_indices[0], edge_indices[1]):
+        for eIdx, (start, end) in enumerate(zip(edge_indices[0], edge_indices[1])):
             pre_gelu_embeddings[start, self.embed_dim:2*self.embed_dim] += node_embeddings[end]
-            pre_gelu_embeddings[start, 2*self.embed_dim:3*self.embed_dim] += edge_embeddings[start, end]
+            pre_gelu_embeddings[start, 2*self.embed_dim:3*self.embed_dim] += edge_embeddings[eIdx]
         
         # GPU work: GELU --> output embeddings
         gelu_embeddings: Tensor = self.embed_gelu(pre_gelu_embeddings)
