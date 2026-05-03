@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
 from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
+import sys, os, gc
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(CUR_DIR)
+sys.path.append(ROOT_DIR)
 
 import torch
 from torch import nn, tensor, Tensor, autograd, optim, cuda, mps, cpu, distributions
@@ -13,9 +17,9 @@ from torch_geometric.nn import MessagePassing, GCNConv, SAGEConv, GATConv, GINCo
 from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
-from .gnn import GNNLayer, GNN
-from .attention import AttentionLayer
-from .mlp import MLP
+from models.gnn import GNNLayer, GNN
+from models.attention import AttentionLayer
+from models.mlp import MLP
 
 
 class TransformerLayer(Module):
@@ -34,7 +38,8 @@ class TransformerLayer(Module):
             num_gnn_layers: int,
             attn_distance_factors: List[float] | None,
             num_mlp_layers: int,
-            device: torch.device
+            device: torch.device,
+            dtype: torch.dtype = torch.bfloat16
     ) -> None:
         """
         Initialize the transformer layer.
@@ -47,6 +52,7 @@ class TransformerLayer(Module):
             attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
             num_mlp_layers: The number of MLP layers in the MLP layer
             device: The device to run the layer on
+            dtype: The data type to use for the layer (default: torch.bfloat16)
         """
         super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
@@ -55,11 +61,13 @@ class TransformerLayer(Module):
         self.num_gnn_layers: int = num_gnn_layers # number of gnn layers
         self.attn_distance_factors: List[float] | None = attn_distance_factors # for weighted attention, preferential to neighbors
         self.num_mlp_layers: int = num_mlp_layers # number of mlp layers
-        self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, device) # attention layer
-        self.gnn_layer = GNN(embed_dim, num_gnn_layers, device) # gnn layer
-        self.mlp_layer = MLP(embed_dim, num_mlp_layers, device) # mlp layer
+        self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, device, dtype) # attention layer
+        self.gnn_layer = GNN(embed_dim, num_gnn_layers, device, dtype) # gnn layer
+        self.mlp_layer = MLP(embed_dim, num_mlp_layers, device, dtype) # mlp layer
         self.device = device # device to run the layer on
+        self.dtype = dtype # data type to use for the layer
         self.to(device) # move the layer to the device
+        self.to(dtype) # move the layer to the data type
 
     def forward(
             self,
@@ -79,7 +87,7 @@ class TransformerLayer(Module):
         """
         gnn_output = self.gnn_layer(input_graphs, input_embeddings) # output of the gnn layer
         attention_output = self.attention_layer(input_graphs, gnn_output) # output of the attention layer
-        mlp_output = self.mlp_layer(attention_output) # output of the mlp layer
+        mlp_output = self.mlp_layer(input_graphs, attention_output) # output of the mlp layer
         return mlp_output
 
 
@@ -102,7 +110,8 @@ class Transformer(Module):
             num_gnn_layers: int | List[int],
             attn_distance_factors: List[List[float] | None] | None,
             num_mlp_layers: int | List[int],
-            device: torch.device
+            device: torch.device,
+            dtype: torch.dtype = torch.bfloat16
     ) -> None:
         """
         Initialize the transformer.
@@ -152,11 +161,15 @@ class Transformer(Module):
                 self.num_gnn_layers[i],
                 self.attn_distance_factors[i],
                 self.num_mlp_layers[i],
-                device
+                device,
+                dtype
             ) for i in range(num_layers)
         ]) # list of transformer layers
+
         self.device: torch.device = device # device to run the layer on
+        self.dtype: torch.dtype = dtype # data type to use for the layer
         self.to(device) # move the layer to the device
+        self.to(dtype)
 
     def forward(
             self,

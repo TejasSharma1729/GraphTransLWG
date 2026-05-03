@@ -29,7 +29,8 @@ class AttentionLayer(Module):
             num_heads: int,
             head_dim: int,
             attn_distance_factors: List[float] | None,
-            device: torch.device
+            device: torch.device,
+            dtype: torch.dtype = torch.bfloat16
     ) -> None:
         """
         Initialize the attention layer.
@@ -40,6 +41,7 @@ class AttentionLayer(Module):
             head_dim: The dimension of each attention head
             attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
             device: The device to run the layer on
+            dtype: The data type to use for the layer (default: torch.bfloat16)
         """
         super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
@@ -51,7 +53,9 @@ class AttentionLayer(Module):
         self.value_weights = nn.Linear(embed_dim, num_heads * head_dim) # linear transformation for value embeddings
         self.update_weights = nn.Linear(num_heads * head_dim, embed_dim) # linear transformation for output embeddings
         self.device: torch.device = device # device to run the layer on
+        self.dtype: torch.dtype = dtype # data type to use for the layer
         self.to(device) # move the layer to the device
+        self.to(dtype)
     
     def forward(
             self,
@@ -88,11 +92,12 @@ class AttentionLayer(Module):
         for graph in input_graphs:
             assert graph.num_nodes is not None
             num_vertices.append(graph.num_nodes)
-        net_num_vertices: int = sum(num_vertices).__int__()
+        net_num_vertices: int = sum(num_vertices).__int__() + num_vertices.__len__()
+        # One vertex per node and one vertex for CLS per graph, so add num_graphs to total vertices.
         assert input_embeddings.shape == torch.Size([net_num_vertices, self.embed_dim])
         
         # Base attention mask = edge matrix.
-        base_attn_mask: Tensor = torch.zeros((net_num_vertices, net_num_vertices))
+        base_attn_mask: Tensor = torch.eye(net_num_vertices)
         prev_num_vertices: int = 0
         for i, graph in enumerate(input_graphs):
             assert graph.edge_index is not None
@@ -100,7 +105,10 @@ class AttentionLayer(Module):
             offset = prev_num_vertices
             for (start, end) in zip(graph.edge_index[0], graph.edge_index[1]):
                 base_attn_mask[start + offset, end + offset] = 1.0
-            prev_num_vertices += num_vertices[i]
+            for offset_ in range(num_vertices[i]):
+                base_attn_mask[offset + offset_, offset + num_vertices[i]] = 1.0 # CLS attends to all nodes in the graph.
+                base_attn_mask[offset + num_vertices[i], offset + offset_] = 1.0 # All nodes in the graph attend to CLS.
+            prev_num_vertices += num_vertices[i] + 1 # Add 1 for CLS vertex.
         
         # The mask that is acutally used for attention.
         attn_factors: Tensor = torch.eye(net_num_vertices)

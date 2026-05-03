@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
 from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
+import sys, os, gc
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(CUR_DIR)
+sys.path.append(ROOT_DIR)
 
 import torch
 from torch import nn, tensor, Tensor, autograd, optim, cuda, mps, cpu, distributions
@@ -29,7 +33,8 @@ class GNNLayer(Module):
     def __init__(
         self,
         embed_dim: int,
-        device: torch.device
+        device: torch.device,
+        dtype: torch.dtype = torch.bfloat16
     ) -> None:
         """
         Initialize the GNN layer.
@@ -37,6 +42,7 @@ class GNNLayer(Module):
         Args:
             embed_dim: The embedding dimension.
             device: The device to run the layer on.
+            dtype: The data type to use for the layer (default: torch.bfloat16).
         """
         super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
@@ -45,7 +51,9 @@ class GNNLayer(Module):
         self.embed_gelu = nn.GELU() # GELU activation function
         self.embed_update = nn.Linear(3 * embed_dim, embed_dim) # linear transformation for output embeddings
         self.device: torch.device = device # device to run the layer on
+        self.dtype: torch.dtype = dtype # data type to use for the layer
         self.to(device) # move the layer to the device
+        self.to(dtype) # move the layer to the data type
     
     def forward(
         self,
@@ -78,7 +86,14 @@ class GNNLayer(Module):
         for graph in input_graphs:
             assert graph.num_nodes is not None
             num_vertices.append(graph.num_nodes)
-        assert input_embeddings.shape == torch.Size([sum(num_vertices).__int__(), self.embed_dim])
+        
+        net_vertices_with_cls: int = sum(num_vertices).__int__() + num_vertices.__len__()
+        # One vertex per node and one vertex for CLS per graph, so add num_graphs to total vertices.
+        # The CLS does not pass through the GNN layer, so it does not affect the computations in the GNN layer,
+        #  but it does affect the total number of vertices and the indexing of the vertices in the 
+        # input embeddings and the output embeddings.
+        assert input_embeddings.shape == torch.Size([net_vertices_with_cls, self.embed_dim])
+        cls_vertices_mask: Tensor = torch.zeros((net_vertices_with_cls,)).bool()
 
         # Compute edge embeddings
         net_num_vertices: int = 0
@@ -86,20 +101,24 @@ class GNNLayer(Module):
         for i, graph in enumerate(input_graphs):
             assert graph.edge_index is not None
             assert graph.edge_index.shape == torch.Size([2, graph.edge_index.shape[1]])
-            net_num_vertices += num_vertices[i]
+            net_num_vertices += num_vertices[i] # We DO NOT add 1 for CLS vertex here.
             edge_indices_list.append(graph.edge_index + net_num_vertices)
+            cls_vertices_mask[net_num_vertices + i - 1] = True # Mark the CLS vertex for this graph.
+            # + i - 1 --> +i since we add 1 for CLS per graph (but not reflected in net_num_vertices)
+            # -1 since net_num_vertices offset includes full size (not size - 1). End node for CLS.
         edge_indices = torch.cat(edge_indices_list)
+        cls_vertices_mask = cls_vertices_mask.to(self.device)
 
-        # GPU work: compute node and edge embeddings
-        node_embeddings: Tensor = self.node_weights(input_embeddings)
+        # GPU work: compute node and edge embeddings only on non-CLS vertices
+        node_embeddings: Tensor = self.node_weights(input_embeddings[~cls_vertices_mask]) 
         edge_embeddings: Tensor = self.edge_weights(torch.cat(
-            [node_embeddings[edge_indices[0]],
-             node_embeddings[edge_indices[1]]
+            [node_embeddings[~cls_vertices_mask][edge_indices[0]],
+             node_embeddings[~cls_vertices_mask][edge_indices[1]]
         ], dim=1))
 
         # Move embeddings to pre-GELU embeddings 
         # (concatenation of node embedding, sum of neighbors' node embeddings and sum of edge embeddings)
-        pre_gelu_embeddings: Tensor = torch.zeros((net_num_vertices, 3 * self.embed_dim))
+        pre_gelu_embeddings: Tensor = torch.zeros((net_num_vertices, 3 * self.embed_dim), device=self.device, dtype=self.dtype)
         for i in range(sum(num_vertices)):
             pre_gelu_embeddings[i, :self.embed_dim] = node_embeddings[i]
         for eIdx, (start, end) in enumerate(zip(edge_indices[0], edge_indices[1])):
@@ -108,8 +127,10 @@ class GNNLayer(Module):
         
         # GPU work: GELU --> output embeddings
         gelu_embeddings: Tensor = self.embed_gelu(pre_gelu_embeddings)
-        out_embeddings: Tensor = self.embed_update(gelu_embeddings)
-        assert out_embeddings.shape == torch.Size([net_num_vertices, self.embed_dim])
+
+        out_embeddings: Tensor = input_embeddings.clone()
+        out_embeddings[~cls_vertices_mask] = self.embed_update(gelu_embeddings)
+        assert out_embeddings.shape == input_embeddings.shape
         return out_embeddings
         
         
@@ -127,18 +148,27 @@ class GNN(Module):
         self,
         embed_dim: int,
         num_layers: int,
-        device: torch.device
+        device: torch.device,
+        dtype: torch.dtype = torch.bfloat16
     ) -> None:
         """
-        Initialize the Graph Neural Network
+        Initialize the Graph Neural Network.
+
+        Args:
+            embed_dim: The embedding dimension
+            num_layers: The number of layers in the GNN
+            device: The device to run the GNN on
+            dtype: The data type to use for the layer (default: torch.bfloat16)
         """
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.num_layers: int = num_layers # number of layers in the GNN
         self.layers = ModuleList([
-            GNNLayer(embed_dim, device) for layer in range(num_layers)
+            GNNLayer(embed_dim, device, dtype) for layer in range(num_layers)
         ]) # list of GNN layers
         self.device: torch.device = device # device to run the GNN on
+        self.dtype: torch.dtype = dtype # data type to use for the layer
         self.to(device) # move the GNN to the device
+        self.to(dtype) # move the GNN to the data type
     
     def forward(
         self,
@@ -147,6 +177,16 @@ class GNN(Module):
     ) -> Tensor:
         """
         Forward pass for a batch of graphs.
+
+        This function computes the output embeddings for all vertices of all graphs in the batch, in order.
+        It applies each layer of the GNN sequentially to the input embeddings, and returns the output embeddings.
+
+        Args:
+            input_graphs: The input graphs (or a single graph)
+            input_embeddings: [net_num_vertices, embed_dim] The input embeddings for all vertices of all graphs, in order.
+
+        Returns:
+            The output embeddings (Tensor).
         """
         out_embeddings = input_embeddings
         for layer in self.layers:
