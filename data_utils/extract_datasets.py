@@ -5,7 +5,7 @@ CUR_DIR: str = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR: str = os.path.dirname(CUR_DIR)
 DATASET_DIR: str = os.path.join(ROOT_DIR, "dataset")
 
-from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
+from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union, Sized, cast
 
 import torch
 from torch import nn, tensor, Tensor, autograd, optim, cuda, mps, cpu, distributions
@@ -53,8 +53,11 @@ if __name__ == "__main__":
     print()
 
     print("==== EXAMPLE GRAPHS FROM THE DATASETS ====")
-    print(f"ogbg-code dataset has {CODE2.__len__()} graphs")
+    num_graphs = len(cast(Sized, CODE2))
+    print(f"ogbg-code dataset has {num_graphs} graphs")
     datapoint: Data = CODE2[0]
     print(f"An example graph from ogbg-code dataset: {datapoint}")
-    print(f"This has {datapoint.num_nodes} nodes and {datapoint.edge_index.shape[1]} edges")
+    edge_index = datapoint.edge_index
+    num_edges = 0 if edge_index is None else int(edge_index.size(1))
+    print(f"This has {datapoint.num_nodes} nodes and {num_edges} edges")
     print()
