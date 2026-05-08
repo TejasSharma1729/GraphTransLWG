@@ -17,6 +17,8 @@ from torch_geometric.nn import MessagePassing, GCNConv, SAGEConv, GATConv, GINCo
 from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
+from models.batch_utils import PackedGraphBatch, build_cls_mask, pack_edge_index
+
 
 class GNNLayer(Module):
     """
@@ -57,7 +59,7 @@ class GNNLayer(Module):
     
     def forward(
         self,
-        input_graphs: Data | List[Data],
+        input_graphs: Data | List[Data] | PackedGraphBatch,
         input_embeddings: Tensor,
     ) -> Tensor:
         """
@@ -75,61 +77,49 @@ class GNNLayer(Module):
         Returns:
             The output embeddings.
         """
-        single_graph: bool = isinstance(input_graphs, Data) or not isinstance(input_graphs, list)
-        if single_graph:
-            assert isinstance(input_graphs, Data)
-            input_graphs = [input_graphs]
-        
-        assert isinstance(input_graphs, list)
-        # One per graph: number of vertices (in order)
-        num_vertices: List[int] = []
-        for graph in input_graphs:
-            assert graph.num_nodes is not None
-            num_vertices.append(graph.num_nodes)
-        
-        net_vertices_with_cls: int = sum(num_vertices).__int__() + num_vertices.__len__()
-        # One vertex per node and one vertex for CLS per graph, so add num_graphs to total vertices.
-        # The CLS does not pass through the GNN layer, so it does not affect the computations in the GNN layer,
-        #  but it does affect the total number of vertices and the indexing of the vertices in the 
-        # input embeddings and the output embeddings.
-        assert input_embeddings.shape == torch.Size([net_vertices_with_cls, self.embed_dim])
-        cls_vertices_mask: Tensor = torch.zeros((net_vertices_with_cls,)).bool()
+        if isinstance(input_graphs, PackedGraphBatch):
+            batch = input_graphs
+        else:
+            single_graph: bool = isinstance(input_graphs, Data) or not isinstance(input_graphs, list)
+            if single_graph:
+                assert isinstance(input_graphs, Data)
+                input_graphs = [input_graphs]
 
-        # Compute edge embeddings
-        net_num_vertices: int = 0
-        edge_indices_list: List[Tensor] = []
-        for i, graph in enumerate(input_graphs):
-            assert graph.edge_index is not None
-            assert graph.edge_index.shape == torch.Size([2, graph.edge_index.shape[1]])
-            net_num_vertices += num_vertices[i] # We DO NOT add 1 for CLS vertex here.
-            edge_indices_list.append(graph.edge_index + net_num_vertices)
-            cls_vertices_mask[net_num_vertices + i - 1] = True # Mark the CLS vertex for this graph.
-            # + i - 1 --> +i since we add 1 for CLS per graph (but not reflected in net_num_vertices)
-            # -1 since net_num_vertices offset includes full size (not size - 1). End node for CLS.
-        edge_indices = torch.cat(edge_indices_list)
-        cls_vertices_mask = cls_vertices_mask.to(self.device)
+            assert isinstance(input_graphs, list)
+            num_vertices: List[int] = []
+            for graph in input_graphs:
+                assert graph.num_nodes is not None
+                num_vertices.append(graph.num_nodes)
+            batch = PackedGraphBatch(
+                graphs=input_graphs,
+                num_nodes=num_vertices,
+                cls_mask=build_cls_mask(num_vertices).to(device=self.device),
+                edge_index=pack_edge_index([graph.edge_index for graph in input_graphs], num_vertices).to(device=self.device),  # type: ignore[arg-type]
+            )
 
-        # GPU work: compute node and edge embeddings only on non-CLS vertices
-        node_embeddings: Tensor = self.node_weights(input_embeddings[~cls_vertices_mask]) 
-        edge_embeddings: Tensor = self.edge_weights(torch.cat(
-            [node_embeddings[~cls_vertices_mask][edge_indices[0]],
-             node_embeddings[~cls_vertices_mask][edge_indices[1]]
-        ], dim=1))
+        non_cls_vertices = int((~batch.cls_mask).sum().item())
+        assert input_embeddings.shape == torch.Size([non_cls_vertices + len(batch.graphs), self.embed_dim])
 
-        # Move embeddings to pre-GELU embeddings 
-        # (concatenation of node embedding, sum of neighbors' node embeddings and sum of edge embeddings)
-        pre_gelu_embeddings: Tensor = torch.zeros((net_num_vertices, 3 * self.embed_dim), device=self.device, dtype=self.dtype)
-        for i in range(sum(num_vertices)):
-            pre_gelu_embeddings[i, :self.embed_dim] = node_embeddings[i]
-        for eIdx, (start, end) in enumerate(zip(edge_indices[0], edge_indices[1])):
-            pre_gelu_embeddings[start, self.embed_dim:2*self.embed_dim] += node_embeddings[end]
-            pre_gelu_embeddings[start, 2*self.embed_dim:3*self.embed_dim] += edge_embeddings[eIdx]
+        # GPU work: compute node and edge embeddings only on non-CLS vertices.
+        node_embeddings: Tensor = self.node_weights(input_embeddings[~batch.cls_mask])
+        edge_sources, edge_targets = batch.edge_index[0], batch.edge_index[1]
+        edge_embeddings: Tensor = self.edge_weights(torch.cat([node_embeddings[edge_sources], node_embeddings[edge_targets]], dim=1))
+
+        # Move embeddings to pre-GELU embeddings.
+        pre_gelu_embeddings: Tensor = torch.zeros((non_cls_vertices, 3 * self.embed_dim), device=self.device, dtype=self.dtype)
+        pre_gelu_embeddings[:, :self.embed_dim] = node_embeddings
+        neighbor_embeddings: Tensor = torch.zeros((non_cls_vertices, self.embed_dim), device=self.device, dtype=self.dtype)
+        edge_sum_embeddings: Tensor = torch.zeros((non_cls_vertices, self.embed_dim), device=self.device, dtype=self.dtype)
+        neighbor_embeddings.index_add_(0, edge_sources, node_embeddings[edge_targets])
+        edge_sum_embeddings.index_add_(0, edge_sources, edge_embeddings)
+        pre_gelu_embeddings[:, self.embed_dim:2*self.embed_dim] = neighbor_embeddings
+        pre_gelu_embeddings[:, 2*self.embed_dim:3*self.embed_dim] = edge_sum_embeddings
         
         # GPU work: GELU --> output embeddings
         gelu_embeddings: Tensor = self.embed_gelu(pre_gelu_embeddings)
 
         out_embeddings: Tensor = input_embeddings.clone()
-        out_embeddings[~cls_vertices_mask] = self.embed_update(gelu_embeddings)
+        out_embeddings[~batch.cls_mask] = self.embed_update(gelu_embeddings)
         assert out_embeddings.shape == input_embeddings.shape
         return out_embeddings
         
@@ -160,6 +150,7 @@ class GNN(Module):
             device: The device to run the GNN on
             dtype: The data type to use for the layer (default: torch.bfloat16)
         """
+        super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.num_layers: int = num_layers # number of layers in the GNN
         self.layers = ModuleList([
@@ -172,7 +163,7 @@ class GNN(Module):
     
     def forward(
         self,
-        input_graphs: Data | List[Data],
+        input_graphs: Data | List[Data] | PackedGraphBatch,
         input_embeddings: Tensor,
     ) -> Tensor:
         """

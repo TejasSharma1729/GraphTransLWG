@@ -17,6 +17,8 @@ from torch_geometric.nn import MessagePassing, GCNConv, SAGEConv, GATConv, GINCo
 from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
+from models.batch_utils import PackedGraphBatch, build_cls_mask
+
 
 class MLP(Module):
     """
@@ -62,7 +64,7 @@ class MLP(Module):
 
     def forward(
             self,
-            input_graphs: Data | List[Data],
+            input_graphs: Data | List[Data] | PackedGraphBatch,
             input_embeddings: Tensor,
     ) -> Tensor:
         """
@@ -80,14 +82,17 @@ class MLP(Module):
         Returns:
             The output embeddings.
         """
-        cls_mask: Tensor = torch.zeros((input_embeddings.shape[0],)).bool() # mask for the CLS tokens
-        net_num_vertices: int = 0
-        for graph in input_graphs if isinstance(input_graphs, list) else [input_graphs]:
-            assert graph.num_nodes is not None
-            net_num_vertices += graph.num_nodes
-            cls_mask[net_num_vertices] = True # Mark the CLS token for this graph.
-            net_num_vertices += 1 # Add 1 for the CLS token.
-        cls_mask = cls_mask.to(self.device)
+        if isinstance(input_graphs, PackedGraphBatch):
+            cls_mask = input_graphs.cls_mask
+        else:
+            cls_mask: Tensor = torch.zeros((input_embeddings.shape[0],)).bool() # mask for the CLS tokens
+            net_num_vertices: int = 0
+            for graph in input_graphs if isinstance(input_graphs, list) else [input_graphs]:
+                assert graph.num_nodes is not None
+                net_num_vertices += graph.num_nodes
+                cls_mask[net_num_vertices] = True # Mark the CLS token for this graph.
+                net_num_vertices += 1 # Add 1 for the CLS token.
+            cls_mask = cls_mask.to(self.device)
         
         out_embeddings = input_embeddings
         for layer, cls_layer in zip(self.layers, self.layers_cls):

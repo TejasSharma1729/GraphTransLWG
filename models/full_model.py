@@ -22,8 +22,9 @@ from models.gnn import GNNLayer, GNN
 from models.attention import AttentionLayer
 from models.mlp import MLP
 from models.transformer import TransformerLayer, Transformer
+from models.batch_utils import PackedGraphBatch, pack_graph_batch
 
-TORCH_DEVICE: str = "cuda" if cuda.is_available() else "mps" if mps.is_available() else "cpu"
+TORCH_DEVICE: str = "cuda" if cuda.is_available() else "mps" if mps.is_available() else "cpu" # type: ignore
 
 @dataclass
 class GraphTransConfig:
@@ -59,6 +60,7 @@ class GraphTransConfig:
     dtype: torch.dtype = torch.bfloat16
 
 
+
 class GraphTransModel(Module):
     """
     The full Graph Transformer model, consisting of the following components:
@@ -82,9 +84,8 @@ class GraphTransModel(Module):
         """
         super().__init__()
         self.config: GraphTransConfig = config # full configuration for the model
-
         self.input_embedding = nn.Linear(config.x_dim, config.embed_dim).to(device=config.device, dtype=config.dtype)
-        self.cls_embedding = nn.Parameter(torch.zeros((1, config.embed_dim), device=config.device, dtype=config.dtype))
+        self.cls_embedding = nn.Linear(1, config.embed_dim).to(device=config.device, dtype=config.dtype)
         # linear transformation for input vertex features to input embeddings and CLS nodes.
         
         self.transformer = Transformer(
@@ -128,30 +129,50 @@ class GraphTransModel(Module):
         if isinstance(input_graphs, Data):
             input_graphs = [input_graphs]
         assert isinstance(input_graphs, list)
-        
-        net_num_vertices: int = 0
-        cls_mask: Tensor = torch.zeros((net_num_vertices,)).bool() # mask for the CLS tokens
-        for graph in input_graphs:
-            assert graph.num_nodes is not None
-            net_num_vertices += graph.num_nodes
-            cls_mask[net_num_vertices] = True # Mark the CLS token for this graph.
-            net_num_vertices += 1 # Add 1 for the CLS token.
-        
-        cls_mask = cls_mask.to(self.device)
+
+        batch: PackedGraphBatch = pack_graph_batch(input_graphs, self.device, self.dtype)
+        net_num_vertices = int(batch.cls_mask.shape[0])
         input_embeddings: Tensor = torch.zeros((net_num_vertices, self.config.embed_dim), device=self.device, dtype=self.dtype)
-        x_tensor: Tensor = torch.cat([graph.x for graph in input_graphs], dim=0) # [net_num_vertices, x_dim]
-        cls_tensor: Tensor = torch.ones((input_graphs.__len__(),), device=self.device, dtype=self.dtype) # [num_graphs,] all ones for CLS tokens
+        x_tensor: Tensor = torch.cat([Tensor(graph.x) for graph in input_graphs], dim=0).to(device=self.device, dtype=self.dtype)
+         # [net_num_vertices, x_dim]
+        cls_tensor: Tensor = torch.ones((input_graphs.__len__(), 1), device=self.device, dtype=self.dtype) # [num_graphs,] all ones for CLS tokens
         
         # Compute input embeddings from input vertex features, and set CLS token embeddings to the CLS embedding.
-        input_embeddings[~cls_mask] = self.input_embedding(x_tensor)
-        input_embeddings[cls_mask] = self.cls_embedding(cls_tensor)
+        input_embeddings[~batch.cls_mask] = self.input_embedding(x_tensor)
+        input_embeddings[batch.cls_mask] = self.cls_embedding(cls_tensor)
         
         # Compute transformer output embeddings from input embeddings
-        transformer_output: Tensor = self.transformer(input_graphs, input_embeddings)
+        transformer_output: Tensor = self.transformer(batch, input_embeddings)
         
         # Compute final output features from unembedding or output layer, only for CLS tokens
-        out_embeddings: Tensor = self.output_layer(transformer_output[cls_mask])
+        out_embeddings: Tensor = self.output_layer(transformer_output[batch.cls_mask])
         
         assert out_embeddings.shape == torch.Size([len(input_graphs), self.config.y_dim]) 
         # output features for all graphs in the batch, in order
         return out_embeddings
+    
+
+@dataclass
+class ModelTrainConfig:
+    """
+    Class that stores the configuration for training the GraphTransModel on a dataset. 
+    This includes the model loader, dataset loader, output mapping function, loss function, and training hyperparameters.
+
+    Args:
+        model_config: The configuration for the GraphTransModel, as a GraphTransConfig object (required).
+        model_loader: A function that returns an instance of the GraphTransModel to train (required).
+        dataset_loader: A function that returns a dataset of graphs to train on (required).
+        out_mapping_fn: A function that maps the output of the model to the ground truth output features for the loss function (required).
+        loss_fn: The loss function to use for training (required).
+        num_epochs: The number of epochs to train for (default: 1)
+        batch_size: The batch size to use for training (default: 32)
+        learning_rate: The learning rate to use for training (default: 0.001)
+    """
+    model_config: GraphTransConfig
+    model_loader: Callable[[], GraphTransModel]
+    dataset_loader: Callable[[], TorchDataset[Data]]
+    out_mapping_fn: Callable[[Any], Tensor]
+    loss_fn: Callable[[Tensor, Tensor], Tensor]
+    num_epochs: int = 1
+    batch_size: int = 32
+    learning_rate: float = 0.001

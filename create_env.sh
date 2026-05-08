@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+IFS=$'\n\t'
 
 if ! command -v conda &>/dev/null; then
     echo "Error: conda not found. Install Miniconda or Anaconda and ensure it is on your PATH." >&2
@@ -20,8 +21,15 @@ echo "Creating conda environment 'graphTrans' with Python 3.10..."
 conda create -n graphTrans python=3.10 -y
 conda activate graphTrans
 
-echo "Installing PyG and its dependencies using conda (pip breaks it) ..."
-conda install pyg -c pyg -y
+echo "Upgrading pip and installing networking/HTTP dependencies to avoid PyCAres issues..."
+python -m pip install --upgrade pip setuptools wheel
+# Ensure compatible pycares/aiodns/aiohttp/fsspec are present to avoid runtime import errors
+python -m pip install --upgrade pycares aiodns aiohttp fsspec || true
+
+echo "Attempting to install PyG via conda (preferred). If this fails, we'll continue and let pip handle remaining deps."
+if ! conda install pyg -c pyg -y; then
+    echo "Warning: conda install pyg failed; continuing (pip install may install torch-geometric from wheels)."
+fi
 
 echo "Installing other project dependencies using pip..."
 pip install -r requirements.txt

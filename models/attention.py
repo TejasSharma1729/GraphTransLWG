@@ -13,6 +13,8 @@ from torch_geometric.nn import MessagePassing, GCNConv, SAGEConv, GATConv, GINCo
 from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 
+from models.batch_utils import PackedGraphBatch, build_cls_mask, pack_edge_index
+
 
 class AttentionLayer(Module):
     """
@@ -59,7 +61,7 @@ class AttentionLayer(Module):
     
     def forward(
             self,
-            input_graphs: Data | List[Data],
+            input_graphs: Data | List[Data] | PackedGraphBatch,
             input_embeddings: Tensor,
     ) -> Tensor:
         """
@@ -81,56 +83,63 @@ class AttentionLayer(Module):
         Returns:
             The output embeddings.
         """
-        single_graph: bool = isinstance(input_graphs, Data) or not isinstance(input_graphs, list)
-        if single_graph:
-            assert isinstance(input_graphs, Data)
-            input_graphs = [input_graphs]
-        
-        assert isinstance(input_graphs, list)
-        # One per graph: number of vertices (in order)
-        num_vertices: List[int] = []
-        for graph in input_graphs:
-            assert graph.num_nodes is not None
-            num_vertices.append(graph.num_nodes)
-        net_num_vertices: int = sum(num_vertices).__int__() + num_vertices.__len__()
-        # One vertex per node and one vertex for CLS per graph, so add num_graphs to total vertices.
-        assert input_embeddings.shape == torch.Size([net_num_vertices, self.embed_dim])
-        
-        # Base attention mask = edge matrix.
-        base_attn_mask: Tensor = torch.eye(net_num_vertices)
-        prev_num_vertices: int = 0
-        for i, graph in enumerate(input_graphs):
-            assert graph.edge_index is not None
-            assert graph.edge_index.shape == torch.Size([2, graph.edge_index.shape[1]])
-            offset = prev_num_vertices
-            for (start, end) in zip(graph.edge_index[0], graph.edge_index[1]):
-                base_attn_mask[start + offset, end + offset] = 1.0
-            for offset_ in range(num_vertices[i]):
-                base_attn_mask[offset + offset_, offset + num_vertices[i]] = 1.0 # CLS attends to all nodes in the graph.
-                base_attn_mask[offset + num_vertices[i], offset + offset_] = 1.0 # All nodes in the graph attend to CLS.
-            prev_num_vertices += num_vertices[i] + 1 # Add 1 for CLS vertex.
-        
-        # The mask that is acutally used for attention.
-        attn_factors: Tensor = torch.eye(net_num_vertices)
-        if self.attn_distance_factors is None:
-            while True:
-                # Since discrete mask, it will converge in finite steps
-                attn_factors_new: Tensor = attn_factors @ base_attn_mask
-                if torch.allclose(attn_factors_new, attn_factors):
-                    # Stop when fixed point reachability converges
-                    break
-                attn_factors = attn_factors_new
+        if isinstance(input_graphs, PackedGraphBatch):
+            batch = input_graphs
+            net_num_vertices = int(batch.cls_mask.shape[0])
+            base_attn_mask = batch.base_attn_mask
+            if self.attn_distance_factors is None:
+                attn_factors = batch.attn_factors
+            else:
+                attn_factors = torch.eye(net_num_vertices, device=self.device, dtype=self.dtype)
+                attn_mask: Tensor = base_attn_mask
+                for factor in self.attn_distance_factors:
+                    attn_mask = torch.clamp(attn_mask @ base_attn_mask, max=1.0)
+                    attn_factors = torch.max(attn_factors, factor * attn_mask)
         else:
-            assert self.attn_distance_factors is not None
-            attn_mask: Tensor = base_attn_mask
-            for i, factor in enumerate(self.attn_distance_factors):
-                attn_mask = attn_mask @ base_attn_mask
-                attn_factors = torch.max(attn_factors, factor * attn_mask)
+            single_graph: bool = isinstance(input_graphs, Data) or not isinstance(input_graphs, list)
+            if single_graph:
+                assert isinstance(input_graphs, Data)
+                input_graphs = [input_graphs]
+
+            assert isinstance(input_graphs, list)
+            num_vertices: List[int] = []
+            for graph in input_graphs:
+                assert graph.num_nodes is not None
+                num_vertices.append(graph.num_nodes)
+            net_num_vertices = sum(num_vertices).__int__() + num_vertices.__len__()
+            assert input_embeddings.shape == torch.Size([net_num_vertices, self.embed_dim])
+
+            base_attn_mask = torch.eye(net_num_vertices, device=self.device, dtype=self.dtype)
+            prev_num_vertices = 0
+            for i, graph in enumerate(input_graphs):
+                assert graph.edge_index is not None
+                offset = prev_num_vertices
+                base_attn_mask[graph.edge_index[0] + offset, graph.edge_index[1] + offset] = 1.0
+                for offset_ in range(num_vertices[i]):
+                    base_attn_mask[offset + offset_, offset + num_vertices[i]] = 1.0
+                    base_attn_mask[offset + num_vertices[i], offset + offset_] = 1.0
+                prev_num_vertices += num_vertices[i] + 1
+
+            # The mask that is actually used for attention.
+            attn_factors = torch.eye(net_num_vertices, device=self.device, dtype=self.dtype)
+            if self.attn_distance_factors is None:
+                while True:
+                    # Since discrete mask, it will converge in finite steps
+                    attn_factors_new: Tensor = torch.clamp(attn_factors @ base_attn_mask, max=1.0)
+                    if torch.allclose(attn_factors_new, attn_factors):
+                        # Stop when fixed point reachability converges
+                        break
+                    attn_factors = attn_factors_new
+            else:
+                attn_mask: Tensor = base_attn_mask
+                for factor in self.attn_distance_factors:
+                    attn_mask = torch.clamp(attn_mask @ base_attn_mask, max=1.0)
+                    attn_factors = torch.max(attn_factors, factor * attn_mask)
         
         # The main (GPU-heavy) computation
-        attn_shape = torch.Size([self.num_heads, net_num_vertices, self.head_dim])
+        attn_shape = torch.Size([net_num_vertices, self.num_heads, self.head_dim])
         query_embeddings: Tensor = self.query_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous()
-        key_embeddings: Tensor = self.key_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous() 
+        key_embeddings: Tensor = self.key_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous()
         value_embeddings: Tensor = self.value_weights(input_embeddings).view(attn_shape).transpose(0, 1).contiguous()
 
         # GPU work: flash attention with floating attention mask (log for proper float masking)
@@ -145,7 +154,7 @@ class AttentionLayer(Module):
 
         # Finally, compute the output embeddings with a linear transformation.
         update_in_shape = torch.Size([net_num_vertices, self.num_heads * self.head_dim])
-        attn_output = attn_output.transpose(0, 1).view(update_in_shape).contiguous()
+        attn_output = attn_output.transpose(0, 1).contiguous().view(update_in_shape)
         out_embeddings: Tensor = self.update_weights(attn_output)
         assert out_embeddings.shape == torch.Size([net_num_vertices, self.embed_dim])
         return out_embeddings

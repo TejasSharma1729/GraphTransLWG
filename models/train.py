@@ -2,6 +2,7 @@
 
 from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
 from tqdm import tqdm, trange
+
 import sys, os, gc
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(CUR_DIR)
@@ -22,17 +23,11 @@ from models.gnn import GNNLayer, GNN
 from models.attention import AttentionLayer
 from models.mlp import MLP
 from models.transformer import TransformerLayer, Transformer
-from models.full_model import GraphTransConfig, GraphTransModel
+from models.full_model import GraphTransConfig, GraphTransModel, ModelTrainConfig
 
-
+    
 def train_graph_transformer(
-        model: GraphTransModel,
-        dataset: TorchDataset,
-        out_mapping_fn: Callable[[Any], Tensor],
-        loss_fn: Callable[[Tensor, Tensor], Tensor],
-        num_epochs: int = 1,
-        batch_size: int = 8,
-        learning_rate: float = 0.0001,
+        config: ModelTrainConfig
 ) -> None:
     """
     Train the Graph Transformer model on the given dataset.
@@ -47,25 +42,26 @@ def train_graph_transformer(
         batch_size: The batch size to use for training (default: 8)
         learning_rate: The learning rate to use for training (default: 0.0001)
     """
+    model = config.model_loader()
+    dataset = config.dataset_loader()
     device: torch.device = model.device
     dtype: torch.dtype = model.dtype
 
-    num_batches = dataset.__len__() // batch_size
-    pbar = tqdm(range(num_epochs * num_batches), desc="Training Graph Transformer")
-    optimizer: Optimizer = Adam(model.parameters(), lr=learning_rate)
+    num_batches = dataset.__len__() // config.batch_size # type: ignore
+    pbar = tqdm(range(config.num_epochs * num_batches), desc="Training Graph Transformer")
+    optimizer: Optimizer = Adam(model.parameters(), lr=config.learning_rate)
 
     for epoch in pbar:
         optimizer.zero_grad() # zero the gradients
-        start = (epoch % num_batches) * batch_size
-        end = start + batch_size
+        start = (epoch % num_batches) * config.batch_size
+        end = start + config.batch_size
         # Get the data for the batch of graphs, and move it to the device and data type of the model
-        batch: List[Data] = [pt.to(device=device, dtype=dtype) for pt in dataset[start:end]] # batch of graphs
-        ground_truth: Tensor = torch.cat([out_mapping_fn(pt.y) for pt in batch], dim=0) # ground truth output features for the batch of graphs
-        ground_truth = ground_truth.to(device=device).long() # move the ground truth to the device and long type.
+        batch: List[Data] = [pt.to(device=device) for pt in dataset[start:end]] # type: ignore
+        ground_truth: Tensor = dataset.y[start:end] # type: ignore
 
         # The main computation: run the model
         output: Tensor = model(batch)
-        loss: Tensor = loss_fn(output, ground_truth) # Compute the loss
+        loss: Tensor = config.loss_fn(output, ground_truth) # Compute the loss
         loss.backward() # backpropagate the loss
         
         # Update the model parameters using an optimizer (e.g., Adam)

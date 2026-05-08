@@ -146,3 +146,4 @@ exps
 data/
 dataset/
 datasets/
+*.out
