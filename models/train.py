@@ -11,6 +11,8 @@ ROOT_DIR = os.path.dirname(CUR_DIR)
 sys.path.append(ROOT_DIR)
 
 import torch
+import random
+import numpy as np
 from torch import nn, tensor, Tensor, autograd, optim, cuda, mps, cpu, distributions
 from torch.nn import Module, Parameter, ModuleList, ModuleDict, functional as F
 from torch.optim import Optimizer, Adam, AdamW, SGD, RMSprop, lr_scheduler
@@ -34,6 +36,14 @@ class TrainingResult:
     best_val_metric: float
     test_metric_at_best_val: float
     final_test_metric: float
+    seed: int
+
+
+@dataclass
+class ExperimentResult:
+    results: List[TrainingResult]
+    mean_test_metric: float
+    std_test_metric: float
 
 
 def _split_indices(
@@ -100,7 +110,8 @@ def _evaluate(
 
 
 def train_graph_transformer(
-        config: ModelTrainConfig
+        config: ModelTrainConfig,
+        run_id: int | None = None,
 ) -> TrainingResult:
     """
     Train the Graph Transformer model on the given dataset.
@@ -115,6 +126,12 @@ def train_graph_transformer(
         batch_size: The batch size to use for training (default: 8)
         learning_rate: The learning rate to use for training (default: 0.0001)
     """
+    random.seed(config.random_seed)
+    np.random.seed(config.random_seed)
+    torch.manual_seed(config.random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.random_seed)
+
     model = config.model_loader()
     dataset = config.dataset_loader()
     device: torch.device = model.device
@@ -126,7 +143,18 @@ def train_graph_transformer(
         config.val_ratio,
         config.random_seed,
     )
-    optimizer: Optimizer = Adam(model.parameters(), lr=config.learning_rate)
+    optimizer: Optimizer = Adam(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+    )
+    if config.scheduler is None or config.scheduler.lower() == "none":
+        scheduler = None
+    elif config.scheduler.lower() == "cosine":
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.num_epochs)
+    else:
+        raise ValueError(f"Unsupported scheduler: {config.scheduler}")
+
     best_val_metric = float("-inf")
     test_metric_at_best_val = 0.0
     best_state_dict = copy.deepcopy(model.state_dict())
@@ -162,6 +190,21 @@ def train_graph_transformer(
             test_metric_at_best_val = test_metric
             best_state_dict = copy.deepcopy(model.state_dict())
 
+        if scheduler is not None:
+            scheduler.step()
+
+        prefix = f"Run {run_id} " if run_id is not None else ""
+        print(
+            f"{prefix}Epoch {epoch + 1}/{config.num_epochs} "
+            f"train_loss={train_loss:.4f} "
+            f"val_loss={val_loss:.4f} "
+            f"val_acc={val_metric:.4f} "
+            f"test_loss={test_loss:.4f} "
+            f"test_acc={test_metric:.4f} "
+            f"lr={optimizer.param_groups[0]['lr']:.6g}",
+            flush=True,
+        )
+
         pbar.set_postfix({
             "epoch": epoch + 1,
             "train_loss": train_loss,
@@ -176,4 +219,37 @@ def train_graph_transformer(
         best_val_metric=best_val_metric,
         test_metric_at_best_val=test_metric_at_best_val,
         final_test_metric=final_test_metric,
+        seed=config.random_seed,
+    )
+
+
+def run_graph_transformer_experiments(config: ModelTrainConfig) -> ExperimentResult:
+    results: List[TrainingResult] = []
+    for run_id in range(config.runs):
+        run_config = copy.copy(config)
+        run_config.random_seed = config.random_seed + run_id
+        result = train_graph_transformer(run_config, run_id=run_id)
+        result.model.to(torch.device("cpu"))
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        results.append(result)
+        print(
+            f"Run {run_id} summary: "
+            f"seed={result.seed} "
+            f"best_val_acc={result.best_val_metric:.4f} "
+            f"test_acc_at_best_val={result.test_metric_at_best_val:.4f}",
+            flush=True,
+        )
+
+    test_metrics = np.array([result.test_metric_at_best_val for result in results], dtype=float)
+    mean_test_metric = float(test_metrics.mean()) if len(test_metrics) else 0.0
+    std_test_metric = float(test_metrics.std()) if len(test_metrics) else 0.0
+    print(
+        f"Average test accuracy: {mean_test_metric:.4f} +/- {std_test_metric:.4f}",
+        flush=True,
+    )
+    return ExperimentResult(
+        results=results,
+        mean_test_metric=mean_test_metric,
+        std_test_metric=std_test_metric,
     )

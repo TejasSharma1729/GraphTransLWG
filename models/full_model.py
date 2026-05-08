@@ -44,6 +44,8 @@ class GraphTransConfig:
         num_gnn_layers: The number of gnn layers in each transformer layer of the transformer module
         attn_distance_factors: The attention distance factors for each transformer layer of the transformer module (hyperparameters for weighing attention)
         num_mlp_layers: The number of mlp layers in each transformer layer of the transformer module
+        mlp_hidden_dim: Hidden dimension inside the transformer feedforward/MLP subnetwork.
+        dropout: Dropout used in transformer attention and residual branches.
         device: The device to run the model on
         dtype: The data type to use for the model (default: torch.float32)
     """
@@ -56,6 +58,8 @@ class GraphTransConfig:
     num_gnn_layers: int | List[int] = 2
     attn_distance_factors: List[List[float] | None] | None = None
     num_mlp_layers: int | List[int] = 2
+    mlp_hidden_dim: int | None = None
+    dropout: float = 0.0
     device: torch.device = torch.device(TORCH_DEVICE)
     dtype: torch.dtype = torch.float32
 
@@ -96,6 +100,8 @@ class GraphTransModel(Module):
             config.num_gnn_layers,
             config.attn_distance_factors,
             config.num_mlp_layers,
+            config.mlp_hidden_dim,
+            config.dropout,
             config.device,
             config.dtype
         ) # transformer module consisting of multiple transformer layers
@@ -168,6 +174,9 @@ class ModelTrainConfig:
         num_epochs: The number of epochs to train for (default: 1)
         batch_size: The batch size to use for training (default: 32)
         learning_rate: The learning rate to use for training (default: 0.001)
+        weight_decay: Adam weight decay.
+        scheduler: Optional learning rate scheduler name.
+        runs: Number of repeated random-seed runs.
         train_ratio: Fraction of the dataset used for training.
         val_ratio: Fraction of the dataset used for validation.
         random_seed: Seed for reproducible train/validation/test splits.
@@ -181,6 +190,9 @@ class ModelTrainConfig:
     num_epochs: int = 1
     batch_size: int = 32
     learning_rate: float = 0.001
+    weight_decay: float = 0.0
+    scheduler: str | None = None
+    runs: int = 1
     train_ratio: float = 0.8
     val_ratio: float = 0.1
     random_seed: int = 12344

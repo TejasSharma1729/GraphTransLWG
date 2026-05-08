@@ -31,6 +31,7 @@ class MLP(Module):
             self,
             embed_dim: int,
             num_layers: int,
+            hidden_dim: int | None,
             device: torch.device,
             dtype: torch.dtype = torch.bfloat16
     ) -> None:
@@ -44,17 +45,22 @@ class MLP(Module):
             dtype: The data type to use for the layer (default: torch.bfloat16)
         """
         super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1")
+        if hidden_dim is None:
+            hidden_dim = embed_dim
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.num_layers: int = num_layers # number of layers in the MLP
+        self.hidden_dim: int = hidden_dim
         module_list: List[Module] = []
         module_list_cls: List[Module] = []
-        for layer in range(num_layers - 1):
-            module_list.append(nn.Linear(embed_dim, embed_dim)) # linear transformation for the layer
-            module_list.append(nn.GELU()) # GELU activation function for the layer
-            module_list_cls.append(nn.Linear(embed_dim, embed_dim)) # linear transformation for the CLS token
-            module_list_cls.append(nn.GELU()) # GELU activation function for the CLS token
-        module_list.append(nn.Linear(embed_dim, embed_dim)) # linear transformation for the final layer
-        module_list_cls.append(nn.Linear(embed_dim, embed_dim)) # linear transformation for the final layer of the CLS token
+        layer_dims = [embed_dim] + [hidden_dim] * (num_layers - 1) + [embed_dim]
+        for layer in range(num_layers):
+            module_list.append(nn.Linear(layer_dims[layer], layer_dims[layer + 1]))
+            module_list_cls.append(nn.Linear(layer_dims[layer], layer_dims[layer + 1]))
+            if layer < num_layers - 1:
+                module_list.append(nn.GELU())
+                module_list_cls.append(nn.GELU())
         self.layers = ModuleList(module_list) # list of layers in the MLP
         self.layers_cls = ModuleList(module_list_cls) # list of layers for the CLS token in the MLP
         self.device: torch.device = device # device to run the MLP on

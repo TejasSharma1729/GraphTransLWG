@@ -31,6 +31,7 @@ class AttentionLayer(Module):
             num_heads: int,
             head_dim: int,
             attn_distance_factors: List[float] | None,
+            dropout: float,
             device: torch.device,
             dtype: torch.dtype = torch.bfloat16
     ) -> None:
@@ -50,6 +51,7 @@ class AttentionLayer(Module):
         self.num_heads: int = num_heads # number of attention heads
         self.head_dim: int = head_dim # dimension of each attention head
         self.attn_distance_factors: List[float] | None = attn_distance_factors # for weighted attention, preferential to neighbors
+        self.dropout: float = dropout
         self.query_weights = nn.Linear(embed_dim, num_heads * head_dim) # linear transformation for query embeddings
         self.key_weights = nn.Linear(embed_dim, num_heads * head_dim)   # linear transformation for key embeddings
         self.value_weights = nn.Linear(embed_dim, num_heads * head_dim) # linear transformation for value embeddings
@@ -148,7 +150,7 @@ class AttentionLayer(Module):
             key_embeddings,
             value_embeddings,
             attn_mask=attn_factors.log(), # Log for proper float masking.
-            dropout_p=0.0,
+            dropout_p=self.dropout if self.training else 0.0,
             is_causal=False,
         )
 

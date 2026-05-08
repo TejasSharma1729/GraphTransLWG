@@ -118,7 +118,7 @@ class GNNLayer(Module):
         # GPU work: GELU --> output embeddings
         gelu_embeddings: Tensor = self.embed_gelu(pre_gelu_embeddings)
 
-        out_embeddings: Tensor = input_embeddings.clone()
+        out_embeddings: Tensor = torch.zeros_like(input_embeddings)
         out_embeddings[~batch.cls_mask] = self.embed_update(gelu_embeddings)
         assert out_embeddings.shape == input_embeddings.shape
         return out_embeddings

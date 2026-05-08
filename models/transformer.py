@@ -39,6 +39,8 @@ class TransformerLayer(Module):
             num_gnn_layers: int,
             attn_distance_factors: List[float] | None,
             num_mlp_layers: int,
+            mlp_hidden_dim: int | None,
+            dropout: float,
             device: torch.device,
             dtype: torch.dtype = torch.bfloat16
     ) -> None:
@@ -62,12 +64,15 @@ class TransformerLayer(Module):
         self.num_gnn_layers: int = num_gnn_layers # number of gnn layers
         self.attn_distance_factors: List[float] | None = attn_distance_factors # for weighted attention, preferential to neighbors
         self.num_mlp_layers: int = num_mlp_layers # number of mlp layers
-        self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, device, dtype) # attention layer
+        self.mlp_hidden_dim: int | None = mlp_hidden_dim
+        self.dropout_p: float = dropout
+        self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, dropout, device, dtype) # attention layer
         self.gnn_layer = GNN(embed_dim, num_gnn_layers, device, dtype) # gnn layer
-        self.mlp_layer = MLP(embed_dim, num_mlp_layers, device, dtype) # mlp layer
+        self.mlp_layer = MLP(embed_dim, num_mlp_layers, mlp_hidden_dim, device, dtype) # mlp layer
         self.gnn_norm = nn.LayerNorm(embed_dim)
         self.attention_norm = nn.LayerNorm(embed_dim)
         self.mlp_norm = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(dropout)
         self.device = device # device to run the layer on
         self.dtype = dtype # data type to use for the layer
         self.to(device) # move the layer to the device
@@ -90,9 +95,9 @@ class TransformerLayer(Module):
         Returns:
             The output embeddings.
         """
-        embeddings = input_embeddings + self.gnn_layer(input_graphs, self.gnn_norm(input_embeddings))
-        embeddings = embeddings + self.attention_layer(input_graphs, self.attention_norm(embeddings))
-        embeddings = embeddings + self.mlp_layer(input_graphs, self.mlp_norm(embeddings))
+        embeddings = input_embeddings + self.dropout(self.gnn_layer(input_graphs, self.gnn_norm(input_embeddings)))
+        embeddings = embeddings + self.dropout(self.attention_layer(input_graphs, self.attention_norm(embeddings)))
+        embeddings = embeddings + self.dropout(self.mlp_layer(input_graphs, self.mlp_norm(embeddings)))
         return embeddings
 
 
@@ -115,6 +120,8 @@ class Transformer(Module):
             num_gnn_layers: int | List[int],
             attn_distance_factors: List[List[float] | None] | None,
             num_mlp_layers: int | List[int],
+            mlp_hidden_dim: int | None,
+            dropout: float,
             device: torch.device,
             dtype: torch.dtype = torch.bfloat16
     ) -> None:
@@ -136,6 +143,8 @@ class Transformer(Module):
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
         self.num_heads: int = num_heads # number of attention heads
         self.head_dim: int = head_dim # dimension of each attention head
+        self.mlp_hidden_dim: int | None = mlp_hidden_dim
+        self.dropout: float = dropout
         
         self.num_gnn_layers: List[int] # list of number of gnn layers for each transformer layer
         if isinstance(num_gnn_layers, int):
@@ -166,6 +175,8 @@ class Transformer(Module):
                 self.num_gnn_layers[i],
                 self.attn_distance_factors[i],
                 self.num_mlp_layers[i],
+                mlp_hidden_dim,
+                dropout,
                 device,
                 dtype
             ) for i in range(num_layers)
