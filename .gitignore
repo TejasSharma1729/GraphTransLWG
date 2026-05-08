@@ -147,3 +147,5 @@ data/
 dataset/
 datasets/
 *.out
+*.pt
+*.pth
