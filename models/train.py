@@ -28,7 +28,7 @@ from models.full_model import GraphTransConfig, GraphTransModel, ModelTrainConfi
     
 def train_graph_transformer(
         config: ModelTrainConfig
-) -> None:
+) -> GraphTransModel:
     """
     Train the Graph Transformer model on the given dataset.
 
@@ -67,3 +67,5 @@ def train_graph_transformer(
         # Update the model parameters using an optimizer (e.g., Adam)
         optimizer.step() # update the model parameters
         pbar.set_postfix({"loss": loss.item()}) # update the progress bar with the current loss
+
+    return model

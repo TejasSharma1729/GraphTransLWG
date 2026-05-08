@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import sys, os, gc, argparse
-from dataclasses import replace
+from dataclasses import asdict, replace
 import torch, torch_geometric
 
 from torch import nn, tensor, Tensor, optim, cuda, mps, cpu, distributions, autograd
@@ -29,9 +29,10 @@ from data_utils import get_graph_dataset, load_tudataset_as_torch_dataset, save_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the Graph Transformer model on a given dataset.")
     parser.add_argument("--dataset", "-d", type=str, required=True, help="The name of the dataset to train on (e.g., NCI1, NCI109, ogbg-code2).")
-    parser.add_argument("--batch_size", "-b", type=int, default=None, help="Batch size for training (default: 8 for most datasets, see config).")
+    parser.add_argument("--batch_size", "-b", type=int, default=None, help="Batch size for training (default: 32 for most datasets, see config).")
     parser.add_argument("--num_epochs", "-e", type=int, default=None, help="Number of epochs to train for (default: 1).")
     parser.add_argument("--learning_rate", "-l", type=float, default=None, help="Learning rate for the optimizer (default: 0.001).")
+    parser.add_argument("--save_path", type=str, default="checkpoints", help="Directory to save the trained model checkpoint (default: checkpoints).")
     args = parser.parse_args()
 
     dataset_name: str = args.dataset
@@ -53,4 +54,22 @@ if __name__ == "__main__":
     if overrides:
         train_config = replace(train_config, **overrides)
 
-    train_graph_transformer(train_config)
+    model = train_graph_transformer(train_config)
+
+    os.makedirs(args.save_path, exist_ok=True)
+    save_name = f"{dataset_name}_model.pt"
+    save_file = os.path.join(args.save_path, save_name)
+    torch.save(
+        {
+            "dataset": dataset_name,
+            "model_state_dict": model.state_dict(),
+            "model_config": asdict(train_config.model_config),
+            "train_config": {
+                "num_epochs": train_config.num_epochs,
+                "batch_size": train_config.batch_size,
+                "learning_rate": train_config.learning_rate,
+            },
+        },
+        save_file,
+    )
+    print(f"Saved model checkpoint to {save_file}")
