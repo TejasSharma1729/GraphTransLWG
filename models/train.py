@@ -137,12 +137,15 @@ def train_graph_transformer(
     device: torch.device = model.device
     dtype: torch.dtype = model.dtype
 
-    train_indices, val_indices, test_indices = _split_indices(
-        dataset.__len__(), # type: ignore
-        config.train_ratio,
-        config.val_ratio,
-        config.random_seed,
-    )
+    if config.fixed_split_indices is not None:
+        train_indices, val_indices, test_indices = config.fixed_split_indices
+    else:
+        train_indices, val_indices, test_indices = _split_indices(
+            dataset.__len__(), # type: ignore
+            config.train_ratio,
+            config.val_ratio,
+            config.random_seed,
+        )
     optimizer: Optimizer = Adam(
         model.parameters(),
         lr=config.learning_rate,

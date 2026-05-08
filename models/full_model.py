@@ -26,6 +26,29 @@ from models.batch_utils import PackedGraphBatch, pack_graph_batch
 
 TORCH_DEVICE: str = "cuda" if cuda.is_available() else "mps" if mps.is_available() else "cpu" # type: ignore
 
+
+class ASTNodeEncoder(Module):
+    """
+    Encodes AST node features (type index, attribute index, depth) into a dense vector
+    using three separate embedding tables, then sums them.
+
+    Used for ogbg-code2 where x[:,0]=node_type, x[:,1]=node_attr, and node_depth is
+    a separate integer tensor.
+    """
+    def __init__(self, embed_dim: int, num_nodetypes: int, num_nodeattributes: int, max_depth: int = 20) -> None:
+        super().__init__()
+        self.max_depth = max_depth
+        self.type_encoder      = nn.Embedding(num_nodetypes,      embed_dim)
+        self.attribute_encoder = nn.Embedding(num_nodeattributes, embed_dim)
+        self.depth_encoder     = nn.Embedding(max_depth + 1,      embed_dim)
+
+    def forward(self, x: Tensor, depth: Tensor) -> Tensor:
+        depth_clipped = depth.clamp(max=self.max_depth)
+        return (self.type_encoder(x[:, 0])
+                + self.attribute_encoder(x[:, 1])
+                + self.depth_encoder(depth_clipped))
+
+
 @dataclass
 class GraphTransConfig:
     """
@@ -60,6 +83,13 @@ class GraphTransConfig:
     num_mlp_layers: int | List[int] = 2
     mlp_hidden_dim: int | None = None
     dropout: float = 0.0
+    # ── code2 / sequence-prediction mode ──────────────────────────────────────
+    num_node_types: int | None = None   # set for code2; enables ASTNodeEncoder
+    num_node_attrs: int | None = None
+    max_node_depth: int = 20
+    max_seq_len: int | None = None      # set for code2; enables multi-head output
+    num_vocab: int | None = None        # vocabulary size (num_vocab output heads)
+    # ──────────────────────────────────────────────────────────────────────────
     device: torch.device = torch.device(TORCH_DEVICE)
     dtype: torch.dtype = torch.float32
 
@@ -87,10 +117,24 @@ class GraphTransModel(Module):
             config: The configuration for the model, as a GraphTransConfig object (required).
         """
         super().__init__()
-        self.config: GraphTransConfig = config # full configuration for the model
-        self.input_embedding = nn.Linear(config.x_dim, config.embed_dim).to(device=config.device, dtype=config.dtype)
+        self.config: GraphTransConfig = config
+        self._is_code2: bool = (config.num_node_types is not None and config.max_seq_len is not None)
+
+        if self._is_code2:
+            assert config.num_node_types is not None and config.num_node_attrs is not None
+            assert config.max_seq_len    is not None and config.num_vocab      is not None
+            self.input_embedding: Module = ASTNodeEncoder(
+                config.embed_dim, config.num_node_types, config.num_node_attrs, config.max_node_depth
+            )
+            self.output_layer: Module = nn.ModuleList([
+                nn.Linear(config.embed_dim, config.num_vocab)
+                for _ in range(config.max_seq_len)
+            ])
+        else:
+            self.input_embedding = nn.Linear(config.x_dim, config.embed_dim)
+            self.output_layer    = nn.Linear(config.embed_dim, config.y_dim)
+
         self.cls_embedding = nn.Linear(1, config.embed_dim).to(device=config.device, dtype=config.dtype)
-        # linear transformation for input vertex features to input embeddings and CLS nodes.
         
         self.transformer = Transformer(
             config.num_transformer_layers,
@@ -139,23 +183,30 @@ class GraphTransModel(Module):
         batch: PackedGraphBatch = pack_graph_batch(input_graphs, self.device, self.dtype)
         net_num_vertices = int(batch.cls_mask.shape[0])
         input_embeddings: Tensor = torch.zeros((net_num_vertices, self.config.embed_dim), device=self.device, dtype=self.dtype)
-        x_tensor: Tensor = torch.cat([graph.x for graph in input_graphs], dim=0).to(device=self.device, dtype=self.dtype)
-         # [net_num_vertices, x_dim]
-        cls_tensor: Tensor = torch.ones((input_graphs.__len__(), 1), device=self.device, dtype=self.dtype) # [num_graphs,] all ones for CLS tokens
-        
-        # Compute input embeddings from input vertex features, and set CLS token embeddings to the CLS embedding.
-        input_embeddings[~batch.cls_mask] = self.input_embedding(x_tensor)
+        cls_tensor: Tensor = torch.ones((len(input_graphs), 1), device=self.device, dtype=self.dtype)
+
+        # Node embeddings: use ASTNodeEncoder for code2, else nn.Linear
+        if self._is_code2:
+            x_int   = torch.cat([g.x          for g in input_graphs], dim=0).long().to(self.device)
+            x_depth = torch.cat([g.node_depth.view(-1) for g in input_graphs], dim=0).long().to(self.device)
+            input_embeddings[~batch.cls_mask] = self.input_embedding(x_int, x_depth).to(self.dtype)
+        else:
+            x_tensor = torch.cat([g.x for g in input_graphs], dim=0).to(device=self.device, dtype=self.dtype)
+            input_embeddings[~batch.cls_mask] = self.input_embedding(x_tensor)
+
         input_embeddings[batch.cls_mask] = self.cls_embedding(cls_tensor)
-        
-        # Compute transformer output embeddings from input embeddings
+
         transformer_output: Tensor = self.transformer(batch, input_embeddings)
-        
-        # Compute final output features from unembedding or output layer, only for CLS tokens
-        out_embeddings: Tensor = self.output_layer(transformer_output[batch.cls_mask])
-        
-        assert out_embeddings.shape == torch.Size([len(input_graphs), self.config.y_dim]) 
-        # output features for all graphs in the batch, in order
-        return out_embeddings
+        cls_emb: Tensor = transformer_output[batch.cls_mask]  # [num_graphs, embed_dim]
+
+        if self._is_code2:
+            # Stack max_seq_len prediction heads → [num_graphs, max_seq_len, num_vocab]
+            assert isinstance(self.output_layer, nn.ModuleList)
+            return torch.stack([head(cls_emb) for head in self.output_layer], dim=1)
+        else:
+            out_embeddings = self.output_layer(cls_emb)
+            assert out_embeddings.shape == torch.Size([len(input_graphs), self.config.y_dim])
+            return out_embeddings
     
 
 @dataclass
@@ -196,3 +247,4 @@ class ModelTrainConfig:
     train_ratio: float = 0.8
     val_ratio: float = 0.1
     random_seed: int = 12344
+    fixed_split_indices: tuple[List[int], List[int], List[int]] | None = None

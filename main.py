@@ -42,11 +42,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     dataset_name: str = args.dataset
-    if dataset_name not in DATASET_CONFIGS:
-        raise ValueError(f"Dataset {dataset_name} not found in DATASET_CONFIGS. Available datasets: {list(DATASET_CONFIGS.keys())}")
-    
-    config: GraphTransConfig = DATASET_CONFIGS[dataset_name]
-    train_config: ModelTrainConfig = TRAIN_CONFIGS[dataset_name]
+
+    if dataset_name == "ogbg-code2":
+        from code2.train_config import get_code2_train_config
+        config, train_config = get_code2_train_config()
+    else:
+        if dataset_name not in DATASET_CONFIGS:
+            raise ValueError(f"Dataset {dataset_name} not found in DATASET_CONFIGS. Available: {list(DATASET_CONFIGS.keys())}")
+        config: GraphTransConfig = DATASET_CONFIGS[dataset_name]
+        train_config: ModelTrainConfig = TRAIN_CONFIGS[dataset_name]
     
     # Override training hyperparameters if provided via command line
     overrides = {}
