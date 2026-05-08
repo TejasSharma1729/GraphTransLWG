@@ -115,6 +115,11 @@ def graph_binary_targets(graphs: List[Data]) -> Tensor:
     return graph_targets(graphs).float()
 
 
+def graph_class_accuracy(pred_logits: Tensor, target: Tensor) -> float:
+    pred = pred_logits.argmax(dim=1)
+    return float((pred == target.view(-1)).float().mean().item())
+
+
 def unsupported_code2(*args: Any, **kwargs: Any) -> Any:
     raise NotImplementedError(
         "ogbg-code2 needs sequence decoding/tokenization support; use NCI1, NCI109, "
@@ -129,6 +134,7 @@ TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
         dataset_loader=lambda: load_tudataset_as_torch_dataset("NCI1")[1].to(TORCH_DEVICE_STR),
         out_mapping_fn=graph_class_targets,
         loss_fn=lambda x, y: F.cross_entropy(x, y),
+        metric_fn=graph_class_accuracy,
     ),
     "NCI109": ModelTrainConfig(
         model_config=DATASET_CONFIGS["NCI109"],
@@ -136,6 +142,7 @@ TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
         dataset_loader=lambda: load_tudataset_as_torch_dataset("NCI109")[1].to(TORCH_DEVICE_STR),
         out_mapping_fn=graph_class_targets,
         loss_fn=lambda x, y: F.cross_entropy(x, y),
+        metric_fn=graph_class_accuracy,
     ),
     "ogbg-code2": ModelTrainConfig(
         model_config=DATASET_CONFIGS["ogbg-code2"],

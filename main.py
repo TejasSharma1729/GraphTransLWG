@@ -16,7 +16,7 @@ from torch_geometric.datasets import TUDataset
 
 from data_utils.config_objects import DATASET_CONFIGS, TRAIN_CONFIGS
 from models.full_model import ModelTrainConfig
-from models.train import train_graph_transformer
+from models.train import TrainingResult, train_graph_transformer
 
 REPO_ROOT: str = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(REPO_ROOT)
@@ -54,7 +54,8 @@ if __name__ == "__main__":
     if overrides:
         train_config = replace(train_config, **overrides)
 
-    model = train_graph_transformer(train_config)
+    result: TrainingResult = train_graph_transformer(train_config)
+    model = result.model
 
     os.makedirs(args.save_path, exist_ok=True)
     save_name = f"{dataset_name}_model.pt"
@@ -68,8 +69,18 @@ if __name__ == "__main__":
                 "num_epochs": train_config.num_epochs,
                 "batch_size": train_config.batch_size,
                 "learning_rate": train_config.learning_rate,
+                "train_ratio": train_config.train_ratio,
+                "val_ratio": train_config.val_ratio,
+                "random_seed": train_config.random_seed,
+            },
+            "metrics": {
+                "best_val_metric": result.best_val_metric,
+                "test_metric_at_best_val": result.test_metric_at_best_val,
+                "final_test_metric": result.final_test_metric,
             },
         },
         save_file,
     )
     print(f"Saved model checkpoint to {save_file}")
+    print(f"Best validation metric: {result.best_val_metric:.4f}")
+    print(f"Test metric at best validation: {result.test_metric_at_best_val:.4f}")

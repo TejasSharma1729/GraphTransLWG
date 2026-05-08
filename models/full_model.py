@@ -164,15 +164,23 @@ class ModelTrainConfig:
         dataset_loader: A function that returns a dataset of graphs to train on (required).
         out_mapping_fn: A function that maps the output of the model to the ground truth output features for the loss function (required).
         loss_fn: The loss function to use for training (required).
+        metric_fn: The metric function to use for validation/testing. Higher is better.
         num_epochs: The number of epochs to train for (default: 1)
         batch_size: The batch size to use for training (default: 32)
         learning_rate: The learning rate to use for training (default: 0.001)
+        train_ratio: Fraction of the dataset used for training.
+        val_ratio: Fraction of the dataset used for validation.
+        random_seed: Seed for reproducible train/validation/test splits.
     """
     model_config: GraphTransConfig
     model_loader: Callable[[], GraphTransModel]
     dataset_loader: Callable[[], TorchDataset[Data]]
     out_mapping_fn: Callable[[Any], Tensor]
     loss_fn: Callable[[Tensor, Tensor], Tensor]
+    metric_fn: Callable[[Tensor, Tensor], float] | None = None
     num_epochs: int = 1
     batch_size: int = 32
     learning_rate: float = 0.001
+    train_ratio: float = 0.8
+    val_ratio: float = 0.1
+    random_seed: int = 12344
