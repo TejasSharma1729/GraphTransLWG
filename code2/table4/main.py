@@ -60,6 +60,8 @@ def main():
     parser.add_argument("--batch_size",    type=int,   default=16)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--runs",          type=int,   default=5)
+    parser.add_argument("--max_graphs",    type=int,   default=None,
+                        help="Subsample dataset to this many total graphs (e.g. 4000).")
     args = parser.parse_args()
 
     if args.row in ("frozen_gnn", "finetune_gnn") and args.pretrained is None:
@@ -73,7 +75,7 @@ def main():
         dataset, train_idx, val_idx, test_idx,
         vocab2idx, idx2vocab,
         num_nodetypes, num_nodeattributes,
-    ) = build_code2_dataset()
+    ) = build_code2_dataset(max_graphs=args.max_graphs)
 
     dataset_info = dict(
         dataset           = dataset,
