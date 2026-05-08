@@ -150,9 +150,6 @@ class GraphTransModel(Module):
             config.dtype
         ) # transformer module consisting of multiple transformer layers
 
-        self.output_layer = nn.Linear(config.embed_dim, config.y_dim).to(device=config.device, dtype=config.dtype)
-        # linear transformation for output CLS embedding to output features
-
         self.device = config.device # device to run the model on
         self.dtype = config.dtype # data type to use for the model
         self.to(config.device) # move the model to the device
