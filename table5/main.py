@@ -20,7 +20,6 @@ Results are also saved as .pt checkpoints in --save_path.
 """
 
 import os, sys, argparse
-from copy import replace
 from dataclasses import replace as dc_replace
 
 import numpy as np
