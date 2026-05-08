@@ -39,13 +39,14 @@ if __name__ == "__main__":
     parser.add_argument("--train_ratio", type=float, default=None, help="Fraction of data used for training.")
     parser.add_argument("--val_ratio", type=float, default=None, help="Fraction of data used for validation.")
     parser.add_argument("--save_path", type=str, default="checkpoints", help="Directory to save the trained model checkpoint (default: checkpoints).")
+    parser.add_argument("--max_graphs", type=int, default=None, help="Subsample ogbg-code2 to this many total graphs (e.g. 4000). Ignored for other datasets.")
     args = parser.parse_args()
 
     dataset_name: str = args.dataset
 
     if dataset_name == "ogbg-code2":
         from code2.train_config import get_code2_train_config
-        config, train_config = get_code2_train_config()
+        config, train_config = get_code2_train_config(max_graphs=args.max_graphs)
     else:
         if dataset_name not in DATASET_CONFIGS:
             raise ValueError(f"Dataset {dataset_name} not found in DATASET_CONFIGS. Available: {list(DATASET_CONFIGS.keys())}")

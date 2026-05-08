@@ -119,20 +119,27 @@ def augment_edge(data: Data) -> Data:
 # Full dataset builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_code2_dataset():
+def build_code2_dataset(max_graphs: int | None = None):
     """
     Download (or load cached) ogbg-code2, build vocabulary from training set,
     and register the on-the-fly transform.
 
+    Parameters
+    ----------
+    max_graphs : int | None
+        If set, subsample the dataset to at most this many graphs total,
+        preserving the train/val/test ratio of the OGB split.
+        Useful for smoke-testing or memory-constrained runs (e.g. max_graphs=4000).
+
     Returns
     -------
     dataset              PygGraphPropPredDataset with .transform set
-    train_idx            list[int]  – OGB official split
+    train_idx            list[int]
     val_idx              list[int]
     test_idx             list[int]
     vocab2idx            dict[str, int]
     idx2vocab            list[str]
-    num_nodetypes        int  – needed to size ASTNodeEncoder
+    num_nodetypes        int
     num_nodeattributes   int
     """
     dataset   = get_graph_dataset("ogbg-code2")
@@ -141,7 +148,16 @@ def build_code2_dataset():
     val_idx   = split_idx["valid"].tolist()
     test_idx  = split_idx["test"].tolist()
 
-    print(f"[code2] {len(train_idx)} train / {len(val_idx)} val / {len(test_idx)} test")
+    # ── optional subsampling ──────────────────────────────────────────────────
+    if max_graphs is not None:
+        total = len(train_idx) + len(val_idx) + len(test_idx)
+        frac  = max_graphs / total
+        train_idx = train_idx[: max(1, int(len(train_idx) * frac))]
+        val_idx   = val_idx  [: max(1, int(len(val_idx)   * frac))]
+        test_idx  = test_idx [: max(1, int(len(test_idx)  * frac))]
+        print(f"[code2] Subsampled to {len(train_idx)} train / {len(val_idx)} val / {len(test_idx)} test")
+    else:
+        print(f"[code2] {len(train_idx)} train / {len(val_idx)} val / {len(test_idx)} test")
 
     print("[code2] Building vocabulary from training sequences...")
     train_seqs = [dataset[i].y for i in train_idx]

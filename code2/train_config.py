@@ -106,6 +106,7 @@ def get_code2_train_config(
     learning_rate: float = 1e-4,
     weight_decay: float = 0.0,
     runs: int = 5,
+    max_graphs: int | None = None,
 ):
     """
     Build GraphTransConfig + ModelTrainConfig for ogbg-code2.
@@ -125,8 +126,9 @@ def get_code2_train_config(
     (
         dataset, train_idx, val_idx, test_idx,
         vocab2idx, idx2vocab,
+
         num_nodetypes, num_nodeattributes,
-    ) = build_code2_dataset()
+    ) = build_code2_dataset(max_graphs=max_graphs)
 
     num_vocab = len(vocab2idx)  # NUM_VOCAB + 2
 
