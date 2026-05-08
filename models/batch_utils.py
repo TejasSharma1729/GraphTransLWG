@@ -43,7 +43,7 @@ def build_cls_mask(num_nodes: List[int]) -> Tensor:
     Example:
         >>> mask = build_cls_mask([3, 2])
         >>> mask
-        tensor([False, False, False,  True, False,  True])  # Shape: [6]
+        tensor([False, False, False,  True, False, False,  True])  # Shape: [7]
     """
     total_vertices = 0
     for count in num_nodes:

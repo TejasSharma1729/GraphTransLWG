@@ -100,9 +100,13 @@ class MLP(Module):
                 net_num_vertices += 1 # Add 1 for the CLS token.
             cls_mask = cls_mask.to(self.device)
         
-        out_embeddings = input_embeddings.clone()
+        non_cls_h = input_embeddings[~cls_mask]
+        cls_h = input_embeddings[cls_mask]
         for layer, cls_layer in zip(self.layers, self.layers_cls):
-            out_embeddings[~cls_mask] = layer(out_embeddings[~cls_mask]) # Apply the layer to non-CLS tokens only.
-            out_embeddings[cls_mask] = cls_layer(out_embeddings[cls_mask]) # Apply the corresponding layer for the CLS token.
+            non_cls_h = layer(non_cls_h)
+            cls_h = cls_layer(cls_h)
+        out_embeddings = torch.zeros_like(input_embeddings)
+        out_embeddings[~cls_mask] = non_cls_h
+        out_embeddings[cls_mask] = cls_h
         return out_embeddings
     

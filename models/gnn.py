@@ -90,11 +90,15 @@ class GNNLayer(Module):
             for graph in input_graphs:
                 assert graph.num_nodes is not None
                 num_vertices.append(graph.num_nodes)
+            _cls_mask = build_cls_mask(num_vertices).to(device=self.device)
+            _n = int(_cls_mask.shape[0])
             batch = PackedGraphBatch(
                 graphs=input_graphs,
                 num_nodes=num_vertices,
-                cls_mask=build_cls_mask(num_vertices).to(device=self.device),
+                cls_mask=_cls_mask,
                 edge_index=pack_edge_index([graph.edge_index for graph in input_graphs], num_vertices).to(device=self.device),  # type: ignore[arg-type]
+                base_attn_mask=torch.zeros((_n, _n), device=self.device, dtype=self.dtype),
+                attn_factors=torch.zeros((_n, _n), device=self.device, dtype=self.dtype),
             )
 
         non_cls_vertices = int((~batch.cls_mask).sum().item())
