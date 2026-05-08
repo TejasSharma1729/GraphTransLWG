@@ -155,6 +155,13 @@ def build_code2_dataset(max_graphs: int | None = None):
 
     # ── optional subsampling ──────────────────────────────────────────────────
     if max_graphs is not None:
+        import random as _random
+        # Use random shuffle with fixed seed so subsamples are representative.
+        # Taking first-N from OGB splits is biased (splits are not randomly ordered).
+        _rng = _random.Random(42)
+        _rng.shuffle(train_idx)
+        _rng.shuffle(val_idx)
+        _rng.shuffle(test_idx)
         total = len(train_idx) + len(val_idx) + len(test_idx)
         frac  = max_graphs / total
         train_idx = train_idx[: max(1, int(len(train_idx) * frac))]

@@ -35,6 +35,11 @@ def code2_out_mapping_fn(samples: List[Data]) -> Tensor:
     return torch.cat([s.y_arr for s in samples], dim=0)
 
 
+def code2_ref_seqs(samples: List[Data]) -> List[List[str]]:
+    """Return original token-sequence labels (data.y) — used for F1, not loss."""
+    return [list(s.y) for s in samples]
+
+
 def code2_loss_fn(output: Tensor, y_arr: Tensor) -> Tensor:
     """
     Cross-entropy averaged over all sequence positions.
@@ -75,10 +80,15 @@ def _make_metric_fn(idx2vocab: List[str]):
     _iv = idx2vocab
 
     def metric_fn(output: Tensor, y_arr: Tensor) -> float:
+        # Decode model predictions using training vocab
         preds_idx = output.detach().cpu().argmax(dim=-1)   # [B, S]
-        refs_idx  = y_arr.detach().cpu()
         seq_pred = [decode_arr_to_seq(preds_idx[i], _iv) for i in range(len(preds_idx))]
-        seq_ref  = [decode_arr_to_seq(refs_idx[i],  _iv) for i in range(len(refs_idx))]
+        # References: decode from y_arr using vocab (same as predictions space)
+        # Note: OOV tokens in val/test are encoded as __UNK__ in y_arr.
+        # Using y_arr-decoded refs keeps pred/ref in the same vocab space,
+        # which gives meaningful relative comparisons across ablation rows.
+        refs_idx = y_arr.detach().cpu()
+        seq_ref  = [decode_arr_to_seq(refs_idx[i], _iv) for i in range(len(refs_idx))]
         return _f1(seq_pred, seq_ref)
 
     return metric_fn

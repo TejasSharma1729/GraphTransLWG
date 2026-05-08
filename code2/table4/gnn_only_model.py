@@ -19,10 +19,32 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))   # GraphTransLWG/
 sys.path.insert(0, _ROOT)
 
-from torch_geometric.data import Data                          # noqa: E402
-from models.gnn import GNN                                     # noqa: E402
-from models.batch_utils import pack_graph_batch                # noqa: E402
-from models.full_model import GraphTransConfig, ASTNodeEncoder # noqa: E402
+from torch_geometric.data import Data                                           # noqa: E402
+from models.gnn import GNN                                                      # noqa: E402
+from models.batch_utils import PackedGraphBatch, build_cls_mask, pack_edge_index # noqa: E402
+from models.full_model import GraphTransConfig, ASTNodeEncoder                  # noqa: E402
+
+
+def _pack_gnn_batch(graphs: List[Data], device: torch.device, dtype: torch.dtype) -> PackedGraphBatch:
+    """
+    Lightweight batch packing for GNN-only models.
+    Skips the O(V^3 * D) transitive-closure computation since GNNOnlyModel
+    never uses base_attn_mask or attn_factors.
+    """
+    num_nodes   = [int(g.num_nodes) for g in graphs]            # type: ignore[arg-type]
+    edge_idxs   = [g.edge_index for g in graphs]                # type: ignore[arg-type]
+    cls_mask    = build_cls_mask(num_nodes).to(device=device)
+    edge_index  = pack_edge_index(edge_idxs, num_nodes).to(device=device)
+    n           = int(cls_mask.shape[0])
+    dummy       = torch.zeros((n, n), device=device, dtype=dtype)   # never read by GNN
+    return PackedGraphBatch(
+        graphs         = graphs,
+        num_nodes      = num_nodes,
+        cls_mask       = cls_mask,
+        edge_index     = edge_index,
+        base_attn_mask = dummy,
+        attn_factors   = dummy,
+    )
 
 
 class GNNOnlyModel(Module):
@@ -83,7 +105,7 @@ class GNNOnlyModel(Module):
         if isinstance(input_graphs, Data):
             input_graphs = [input_graphs]
 
-        batch           = pack_graph_batch(input_graphs, self.device, self.dtype)
+        batch           = _pack_gnn_batch(input_graphs, self.device, self.dtype)
         total_v         = int(batch.cls_mask.shape[0])
         input_emb       = torch.zeros(
             (total_v, self.config.embed_dim), device=self.device, dtype=self.dtype
