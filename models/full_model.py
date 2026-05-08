@@ -45,7 +45,7 @@ class GraphTransConfig:
         attn_distance_factors: The attention distance factors for each transformer layer of the transformer module (hyperparameters for weighing attention)
         num_mlp_layers: The number of mlp layers in each transformer layer of the transformer module
         device: The device to run the model on
-        dtype: The data type to use for the model (default: torch.bfloat16)
+        dtype: The data type to use for the model (default: torch.float32)
     """
     x_dim: int = 2  
     num_transformer_layers: int = 6
@@ -57,7 +57,7 @@ class GraphTransConfig:
     attn_distance_factors: List[List[float] | None] | None = None
     num_mlp_layers: int | List[int] = 2
     device: torch.device = torch.device(TORCH_DEVICE)
-    dtype: torch.dtype = torch.bfloat16
+    dtype: torch.dtype = torch.float32
 
 
 
@@ -133,7 +133,7 @@ class GraphTransModel(Module):
         batch: PackedGraphBatch = pack_graph_batch(input_graphs, self.device, self.dtype)
         net_num_vertices = int(batch.cls_mask.shape[0])
         input_embeddings: Tensor = torch.zeros((net_num_vertices, self.config.embed_dim), device=self.device, dtype=self.dtype)
-        x_tensor: Tensor = torch.cat([Tensor(graph.x) for graph in input_graphs], dim=0).to(device=self.device, dtype=self.dtype)
+        x_tensor: Tensor = torch.cat([graph.x for graph in input_graphs], dim=0).to(device=self.device, dtype=self.dtype)
          # [net_num_vertices, x_dim]
         cls_tensor: Tensor = torch.ones((input_graphs.__len__(), 1), device=self.device, dtype=self.dtype) # [num_graphs,] all ones for CLS tokens
         

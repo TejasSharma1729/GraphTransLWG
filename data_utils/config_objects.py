@@ -25,7 +25,7 @@ from data_utils.tu_to_pyg import PyGAsTorchDataset, load_tudataset_as_torch_data
 
 TORCH_DEVICE_STR: str = "cuda" if cuda.is_available() else "mps" if mps.is_available() else "cpu" # type: ignore
 TORCH_DEVICE = torch.device(TORCH_DEVICE_STR) # type: ignore
-TORCH_DTYPE = torch.bfloat16
+TORCH_DTYPE = torch.float32
 
 DATASET_CONFIGS: Dict[str, GraphTransConfig] = {
     "NCI1": GraphTransConfig(
@@ -95,15 +95,31 @@ DATASET_CONFIGS: Dict[str, GraphTransConfig] = {
     ),
 }
 
-def bad():
-    raise NotImplementedError()
-
-
 def masked_bce_with_logits(pred_logits: Tensor, target: Tensor) -> Tensor:
+    target = target.to(device=pred_logits.device, dtype=pred_logits.dtype)
     mask = ~torch.isnan(target)
     if mask.sum() == 0:
         return torch.tensor(0.0, device=pred_logits.device, dtype=pred_logits.dtype)
     return F.binary_cross_entropy_with_logits(pred_logits[mask], target[mask])
+
+
+def graph_targets(graphs: List[Data]) -> Tensor:
+    return torch.stack([graph.y.reshape(-1) for graph in graphs], dim=0)
+
+
+def graph_class_targets(graphs: List[Data]) -> Tensor:
+    return graph_targets(graphs).view(-1).long()
+
+
+def graph_binary_targets(graphs: List[Data]) -> Tensor:
+    return graph_targets(graphs).float()
+
+
+def unsupported_code2(*args: Any, **kwargs: Any) -> Any:
+    raise NotImplementedError(
+        "ogbg-code2 needs sequence decoding/tokenization support; use NCI1, NCI109, "
+        "ogbg-molhiv, or ogbg-molpcba with this graph-level classifier."
+    )
 
 
 TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
@@ -111,35 +127,35 @@ TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
         model_config=DATASET_CONFIGS["NCI1"],
         model_loader=lambda: GraphTransModel(DATASET_CONFIGS["NCI1"]),
         dataset_loader=lambda: load_tudataset_as_torch_dataset("NCI1")[1].to(TORCH_DEVICE_STR),
-        out_mapping_fn=lambda x: x,
+        out_mapping_fn=graph_class_targets,
         loss_fn=lambda x, y: F.cross_entropy(x, y),
     ),
     "NCI109": ModelTrainConfig(
         model_config=DATASET_CONFIGS["NCI109"],
         model_loader=lambda: GraphTransModel(DATASET_CONFIGS["NCI109"]),
         dataset_loader=lambda: load_tudataset_as_torch_dataset("NCI109")[1].to(TORCH_DEVICE_STR),
-        out_mapping_fn=lambda x: x,
+        out_mapping_fn=graph_class_targets,
         loss_fn=lambda x, y: F.cross_entropy(x, y),
     ),
     "ogbg-code2": ModelTrainConfig(
         model_config=DATASET_CONFIGS["ogbg-code2"],
-        model_loader=lambda: bad(), # not sure of output format
+        model_loader=lambda: unsupported_code2(),
         dataset_loader=lambda: get_graph_dataset("ogbg-code2").to(TORCH_DEVICE_STR), # type: ignore
-        out_mapping_fn=lambda x: bad(),
-        loss_fn=lambda x, y: bad(),
+        out_mapping_fn=unsupported_code2,
+        loss_fn=unsupported_code2,
     ),
     "ogbg-molhiv": ModelTrainConfig(
         model_config=DATASET_CONFIGS["ogbg-molhiv"],
         model_loader=lambda: GraphTransModel(DATASET_CONFIGS["ogbg-molhiv"]),
         dataset_loader=lambda: get_graph_dataset("ogbg-molhiv").to(TORCH_DEVICE_STR), # type: ignore
-        out_mapping_fn=lambda x: x,
-        loss_fn=lambda x, y: F.binary_cross_entropy(x, y),
+        out_mapping_fn=graph_binary_targets,
+        loss_fn=lambda x, y: F.binary_cross_entropy_with_logits(x, y.to(device=x.device, dtype=x.dtype)),
     ),
     "ogbg-molpcba": ModelTrainConfig(
         model_config=DATASET_CONFIGS["ogbg-molpcba"],
         model_loader=lambda: GraphTransModel(DATASET_CONFIGS["ogbg-molpcba"]),
         dataset_loader=lambda: get_graph_dataset("ogbg-molpcba").to(TORCH_DEVICE_STR), # type: ignore
-        out_mapping_fn=lambda x: x,
+        out_mapping_fn=graph_binary_targets,
         loss_fn=lambda x, y: masked_bce_with_logits(x, y),
     ),
 }

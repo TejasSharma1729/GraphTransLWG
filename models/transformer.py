@@ -20,6 +20,7 @@ from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense
 from models.gnn import GNNLayer, GNN
 from models.attention import AttentionLayer
 from models.mlp import MLP
+from models.batch_utils import PackedGraphBatch
 
 
 class TransformerLayer(Module):
@@ -64,6 +65,9 @@ class TransformerLayer(Module):
         self.attention_layer = AttentionLayer(embed_dim, num_heads, head_dim, attn_distance_factors, device, dtype) # attention layer
         self.gnn_layer = GNN(embed_dim, num_gnn_layers, device, dtype) # gnn layer
         self.mlp_layer = MLP(embed_dim, num_mlp_layers, device, dtype) # mlp layer
+        self.gnn_norm = nn.LayerNorm(embed_dim)
+        self.attention_norm = nn.LayerNorm(embed_dim)
+        self.mlp_norm = nn.LayerNorm(embed_dim)
         self.device = device # device to run the layer on
         self.dtype = dtype # data type to use for the layer
         self.to(device) # move the layer to the device
@@ -71,13 +75,14 @@ class TransformerLayer(Module):
 
     def forward(
             self,
-            input_graphs: Data | List[Data],
+            input_graphs: Data | List[Data] | PackedGraphBatch,
             input_embeddings: Tensor,
     ) -> Tensor:
         """
         Forward pass for a batch of graphs or a single graph.
 
-        This computes the output of the attention layer and feeds it into the gnn layer, and returns the output of the gnn layer.
+        This uses a pre-norm residual block:
+        GNN, then attention, then MLP.
 
         Args:
             input_graphs: The input graphs (or a single graph)
@@ -85,10 +90,10 @@ class TransformerLayer(Module):
         Returns:
             The output embeddings.
         """
-        gnn_output = self.gnn_layer(input_graphs, input_embeddings) # output of the gnn layer
-        attention_output = self.attention_layer(input_graphs, gnn_output) # output of the attention layer
-        mlp_output = self.mlp_layer(input_graphs, attention_output) # output of the mlp layer
-        return mlp_output
+        embeddings = input_embeddings + self.gnn_layer(input_graphs, self.gnn_norm(input_embeddings))
+        embeddings = embeddings + self.attention_layer(input_graphs, self.attention_norm(embeddings))
+        embeddings = embeddings + self.mlp_layer(input_graphs, self.mlp_norm(embeddings))
+        return embeddings
 
 
 class Transformer(Module):
@@ -173,7 +178,7 @@ class Transformer(Module):
 
     def forward(
             self,
-            input_graphs: Data | List[Data],
+            input_graphs: Data | List[Data] | PackedGraphBatch,
             input_embeddings: Tensor,
     ) -> Tensor:
         """

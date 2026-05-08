@@ -239,15 +239,20 @@ def pack_graph_batch(graphs: List[Data], device: torch.device, dtype: torch.dtyp
     edge_index = pack_edge_index(edge_indices, num_nodes).to(device=device)
     total_vertices = int(cls_mask.shape[0])
     base_attn_mask = torch.eye(total_vertices, device=device, dtype=dtype)
-    base_attn_mask[edge_index[0], edge_index[1]] = 1.0
 
-    offset = 0
-    for count in num_nodes:
-        cls_index = offset + count
-        node_indices = torch.arange(offset, cls_index, device=device)
+    vertex_offset = 0
+    for graph_idx, count in enumerate(num_nodes):
+        graph_edges = edge_indices[graph_idx].to(device=device)
+        base_attn_mask[
+            graph_edges[0] + vertex_offset,
+            graph_edges[1] + vertex_offset,
+        ] = 1.0
+
+        cls_index = vertex_offset + count
+        node_indices = torch.arange(vertex_offset, cls_index, device=device)
         base_attn_mask[node_indices, cls_index] = 1.0
         base_attn_mask[cls_index, node_indices] = 1.0
-        offset += count + 1
+        vertex_offset += count + 1
 
     attn_factors = build_attn_factors(base_attn_mask)
 

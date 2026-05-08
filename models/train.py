@@ -47,17 +47,18 @@ def train_graph_transformer(
     device: torch.device = model.device
     dtype: torch.dtype = model.dtype
 
-    num_batches = dataset.__len__() // config.batch_size # type: ignore
+    num_batches = (dataset.__len__() + config.batch_size - 1) // config.batch_size # type: ignore
     pbar = tqdm(range(config.num_epochs * num_batches), desc="Training Graph Transformer")
     optimizer: Optimizer = Adam(model.parameters(), lr=config.learning_rate)
 
-    for epoch in pbar:
+    for step in pbar:
         optimizer.zero_grad() # zero the gradients
-        start = (epoch % num_batches) * config.batch_size
-        end = start + config.batch_size
+        start = (step % num_batches) * config.batch_size
+        end = min(start + config.batch_size, dataset.__len__()) # type: ignore
         # Get the data for the batch of graphs, and move it to the device and data type of the model
-        batch: List[Data] = [pt.to(device=device) for pt in dataset[start:end]] # type: ignore
-        ground_truth: Tensor = dataset.y[start:end] # type: ignore
+        samples: List[Data] = [dataset[i] for i in range(start, end)] # type: ignore
+        batch: List[Data] = [pt.to(device=device) for pt in samples]
+        ground_truth: Tensor = config.out_mapping_fn(samples).to(device=device)
 
         # The main computation: run the model
         output: Tensor = model(batch)
