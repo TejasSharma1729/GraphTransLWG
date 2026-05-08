@@ -23,7 +23,7 @@ from ogb.graphproppred import GraphPropPredDataset, PygGraphPropPredDataset
 
 def get_graph_dataset(name: str) -> TorchDataset[Data]:
     """
-    Utility to standardize dataset loading PygGraphPropPredDataset as a 
+    Utility to standardize dataset loading PygGraphPropPredDataset as a
     TorchDataset of graph Data objects, for use in graph transformers.
 
     It auto-saves the dataset into directory "dataset/" and in subsequent runs,
@@ -35,7 +35,15 @@ def get_graph_dataset(name: str) -> TorchDataset[Data]:
     Returns:
         TorchDataset[Data], a dataset of graphs.
     """
-    return PygGraphPropPredDataset(name=name, root=DATASET_DIR)
+    # PyTorch >= 2.6 changed torch.load default to weights_only=True, which
+    # breaks OGB's internal loader. Patch it for this call only.
+    import torch as _torch
+    _orig_load = _torch.load
+    _torch.load = lambda *a, **kw: _orig_load(*a, **{**kw, "weights_only": False})
+    try:
+        return PygGraphPropPredDataset(name=name, root=DATASET_DIR)
+    finally:
+        _torch.load = _orig_load
 
 if __name__ == "__main__":
     print("==== LOADING OPEN GRAPH BENCHMARK DATASETS ====")
