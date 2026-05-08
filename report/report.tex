@@ -1,0 +1,127 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\title{CS-768 (Learning with Graphs) Course Project Report\\\large GraphTransLWG: Hybrid GNN--Transformer for Long-Range Graph Reasoning}
+\author{Eshaan Pareek (22B3986) \and Tejas Sharma (22B0909) \and Aditya Vema Reddy Kesari (22B3985) \and Matam Kushaal (23B1290)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+Graph Neural Networks (GNNs) aggregate neighborhood information using message passing, but depth increases can cause oversmoothing and oversquashing. This limits long-range dependency modeling. Our project studies a GraphTrans-style hybrid architecture that interleaves local graph convolutions with global self-attention to capture both local topology and distant interactions.
+
+\section{Problem Setup}
+Given a graph $G=(V,E)$ with node features $X\in\mathbb{R}^{|V|\times d_x}$ and graph label $y$, learn $f_\theta(G)\to\hat{y}$ for graph-level prediction.
+
+\paragraph{Message Passing (local bias).}
+A generic layer updates node $i$ as:
+\[
+\mathbf{h}^{(\ell+1)}_i = \phi\left(\mathbf{h}^{(\ell)}_i,\; \square_{j\in\mathcal{N}(i)} \psi(\mathbf{h}^{(\ell)}_i,\mathbf{h}^{(\ell)}_j,\mathbf{e}_{ij})\right),
+\]
+where $\square$ is an aggregation operator.
+
+\paragraph{Global attention (long-range context).}
+With hidden matrix $H\in\mathbb{R}^{n\times d}$:
+\[
+Q=HW_Q,\quad K=HW_K,\quad V=HW_V,
+\]
+\[
+\mathrm{Attn}(H)=\mathrm{softmax}\left(\frac{QK^\top}{\sqrt{d_h}}\right)V.
+\]
+This enables every node to interact with every other node in one layer.
+
+\section{Architecture}
+The implemented model follows:
+\begin{enumerate}[leftmargin=1.5em]
+    \item Input projection: $X\mapsto H^{(0)}\in\mathbb{R}^{n\times d}$.
+    \item Add a graph-level \texttt{[CLS]} token per graph for pooling.
+    \item Repeat for $L$ blocks:
+    \begin{itemize}
+        \item GNN sublayer for local structure encoding.
+        \item Multi-head self-attention sublayer for global context.
+        \item Position-wise MLP sublayer.
+        \item Residual paths and normalization in transformer stack.
+    \end{itemize}
+    \item Readout from \texttt{[CLS]} embedding and linear head for logits.
+\end{enumerate}
+
+\subsection{The input projection layer}
+This layer involves a linear transformation of the input node features to the embedding dimension $E$, typically of a higher dimension. This does not account for the discreteness of values of individual input features (that will explode the input dimension). Further, CLS tokens are initialized as a learnable parameter vector of same embedding dimension $E$, and have no input features. For a batch, one CLS token is added per graph.
+
+\subsection{The GNN sublayer}
+Each transformer layer contains a GNN, an Attention Layer and an MLP. The GNN layer typically as 2 sub-layers of message passing. The CLS tokens are completely ignored in the GNN layer and the original embedding is passed directly to the attention layer.
+
+Each GNN layer does the following math, with $\vec{h}_{l, u}$ representing the embedding of node $u$ after layer $l$ (where $l = 0$ signifies the input embeddings per node and $\mathcal{N}(u)$ is the set of neighbors of node $u$):
+\begin{align}
+    \vec{\bar{h}}_{l, u} &= \vec{h}_{l, u} @ \mathbf{W}_{1, l}^{T} \\
+    \vec{e}_{l;\ (u, v)} &= \left(\vec{\bar{h}}_{l, u} \| \vec{\bar{h}}_{l, v}\right) @ \mathbf{W}_{2, l}^{T} \\
+    \vec{n}_{l, u} &= \sum_{v\in\mathcal{N}(u)} \vec{e}_{l;\ (u, v)} \\
+    \vec{m}_{l, u} &= \sum_{v\in\mathcal{N}(u)} \vec{\bar{h}}_{l, v} \\
+    \vec{g}_{l, u} &= \mathrm{GELU}(\vec{\bar{h}}_{l, u} \| \vec{n}_{l, u} \| \vec{m}_{l, u}) \\
+    \vec{h}_{l+1, u} &= \vec{g}_{l, u} @ \mathbf{W}_{4, l}^{T}
+\end{align}
+
+\subsection{The attention sublayer}
+The attention sublayer is a standard multi-head self-attention mechanism. The CLS token is included in the attention computation, allowing it to attend to all nodes and aggregate global information. The attention output is then passed through a position-wise MLP and residual connections before the next block.
+
+Note that among other non-CLS nodes, the attention mask may be restricted or scaled to reduce importance of interaction among distant nodes, but the CLS token can attend to all nodes without restriction.
+
+Also, cross-graph attention in a batch is disabled.
+
+\subsection{The MLP sublayer}
+The MLP sublayer consists of a $L_{MLP} = 2$-layer feedforward network with a non-linear activation (e.g., GELU) in between. It is applied position-wise to the output of the attention sublayer, meaning it processes each node's embedding independently.
+
+Seperate set of parameters are used for the CLS token for correctly performing computations on the CLS token embedding (may be different from the computations on node embeddings).
+
+\section{Implementation Mapping to Repository}
+\begin{itemize}
+    \item \texttt{models/full\_model.py}: \texttt{GraphTransConfig}, \texttt{GraphTransModel}, \texttt{ModelTrainConfig}, CLS pooling path.
+    \item \texttt{models/transformer.py}: transformer block composition.
+    \item \texttt{models/gnn.py}: local message-passing layers.
+    \item \texttt{models/attention.py}: attention mechanism implementation.
+    \item \texttt{models/train.py}: training loop with optimizer/loss/backprop.
+    \item \texttt{data\_utils/config\_objects.py}: dataset and training configuration objects.
+    \item \texttt{data\_utils/dataset\_utils.py}: dataset loading and preprocessing utilities.
+    \item \texttt{trainers/base\_trainer.py}: generic trainer with grad clipping + scheduler hooks.
+    \item \texttt{trainers/flag\_trainer.py}: FLAG adversarial perturbation training.
+\end{itemize}
+
+\section{Training Objective and Optimization}
+For classification, with logits $z_g=f_\theta(G_g)$ and labels $y_g$, we minimize:
+\[
+\mathcal{L}(\theta)=\frac{1}{B}\sum_{g=1}^{B} \mathrm{CE}(z_g,y_g).
+\]
+Training uses Adam-family optimization with optional gradient clipping:
+\[
+\theta \leftarrow \theta - \eta\,\nabla_\theta \mathcal{L}.
+\]
+
+\subsection{FLAG Robust Training}
+FLAG injects adversarial feature perturbations $\delta$ in hidden/node input space:
+\[
+\delta^{t+1} = \Pi_{\epsilon}\left(\delta^t + \alpha\,\mathrm{sign}(\nabla_\delta \mathcal{L}(\theta,\delta^t))\right).
+\]
+Model parameters are updated against perturbed examples, improving robustness and regularization.
+
+\section{Complexity Discussion}
+Let $n=|V|$, hidden width $d$, edges $m=|E|$.
+\begin{itemize}
+    \item GNN layer cost is typically $\mathcal{O}(m d)$.
+    \item Full attention cost is $\mathcal{O}(n^2 d)$ in time and $\mathcal{O}(n^2)$ in memory for attention scores.
+\end{itemize}
+Hence, hybrid architectures trade better long-range modeling for higher cost on large graphs.
+
+\section{Benchmarks and Experimental Scope}
+Configuration files indicate evaluation on OGBG-Code2, OGBG-MolPCBA, NCI1, and NCI109 with multiple variants (GCN/GIN/PNA with and without virtual node settings).
+
+\section{Conclusion}
+This project establishes a technical and reproducible foundation for graph representation learning with GraphTrans-style hybrids. The key benefit is combining local inductive bias from message passing with global receptive fields from attention.
+
+\end{document}
