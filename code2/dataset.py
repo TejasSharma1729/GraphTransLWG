@@ -52,9 +52,14 @@ def get_vocab_mapping(seq_list: List[List[str]], num_vocab: int) -> Tuple[Dict[s
     top = sorted(order, key=lambda w: -cnt[w])[:num_vocab]
     vocab2idx: Dict[str, int] = {w: i for i, w in enumerate(top)}
     idx2vocab: List[str] = top[:]
-    vocab2idx["__UNK__"] = num_vocab
+    # Use len(top) as UNK/EOS indices, not num_vocab.
+    # When fewer unique tokens exist than num_vocab (e.g. after subsampling),
+    # num_vocab would be out of range for the model's output heads.
+    unk_idx = len(top)
+    eos_idx = len(top) + 1
+    vocab2idx["__UNK__"] = unk_idx
     idx2vocab.append("__UNK__")
-    vocab2idx["__EOS__"] = num_vocab + 1
+    vocab2idx["__EOS__"] = eos_idx
     idx2vocab.append("__EOS__")
     return vocab2idx, idx2vocab
 

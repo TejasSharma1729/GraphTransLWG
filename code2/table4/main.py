@@ -93,9 +93,10 @@ def main():
 
     # ── build kwargs for run_experiment ──────────────────────────────────────
     common = dict(
-        num_epochs = args.num_epochs,
-        batch_size = args.batch_size,
-        runs       = args.runs,
+        num_epochs    = args.num_epochs,
+        batch_size    = args.batch_size,
+        runs          = args.runs,
+        lr            = args.learning_rate,
     )
 
     if args.row == "gnn_only":

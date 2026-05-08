@@ -47,7 +47,7 @@ def load_gnn_weights_into_graphtrans(
 
     All transformer layers are initialised with the same pre-trained GNN weights.
     """
-    ckpt  = torch.load(gnn_only_ckpt, map_location="cpu")
+    ckpt  = torch.load(gnn_only_ckpt, map_location="cpu", weights_only=False)
     state = ckpt["model_state_dict"]
 
     # Extract gnn.* keys, strip 'gnn.' prefix
@@ -143,6 +143,7 @@ def get_gnn_only_config(
     num_epochs: int = 30,
     batch_size: int = 16,
     runs: int = 5,
+    lr: float = 1e-4,
 ) -> Dict[str, Any]:
     """
     Row 1 — GNN-only baseline.
@@ -151,7 +152,7 @@ def get_gnn_only_config(
     config = _base_config(dataset_info)
     return _common_kw(
         config, lambda: GNNOnlyModel(config),
-        dataset_info, num_epochs, batch_size, runs=runs,
+        dataset_info, num_epochs, batch_size, lr=lr, runs=runs,
     )
 
 
@@ -161,6 +162,7 @@ def get_frozen_gnn_config(
     num_epochs: int = 30,
     batch_size: int = 16,
     runs: int = 5,
+    lr: float = 1e-4,
 ) -> Dict[str, Any]:
     """
     Row 2 — GraphTrans with pre-trained + frozen GNN.
@@ -175,7 +177,7 @@ def get_frozen_gnn_config(
         freeze_gnn_layers(model)
         return model
 
-    return _common_kw(config, model_factory, dataset_info, num_epochs, batch_size, runs=runs)
+    return _common_kw(config, model_factory, dataset_info, num_epochs, batch_size, lr=lr, runs=runs)
 
 
 def get_finetune_gnn_config(
@@ -184,6 +186,7 @@ def get_finetune_gnn_config(
     num_epochs: int = 30,
     batch_size: int = 16,
     runs: int = 5,
+    lr: float = 1e-4,
 ) -> Dict[str, Any]:
     """
     Row 3 — GraphTrans with pre-trained + fine-tuned GNN.
@@ -196,4 +199,4 @@ def get_finetune_gnn_config(
         load_gnn_weights_into_graphtrans(model, pretrained_ckpt)
         return model
 
-    return _common_kw(config, model_factory, dataset_info, num_epochs, batch_size, runs=runs)
+    return _common_kw(config, model_factory, dataset_info, num_epochs, batch_size, lr=lr, runs=runs)
