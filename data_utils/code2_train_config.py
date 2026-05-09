@@ -20,15 +20,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _ROOT)
 
-from code2.dataset import (          # noqa: E402
+from data_utils.code2_tokenization import (          # noqa: E402
     build_code2_dataset, decode_arr_to_seq, MAX_SEQ_LEN
 )
 from models.full_model import GraphTransConfig, ModelTrainConfig, GraphTransModel  # noqa: E402
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Loss / metric / mapping helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def code2_out_mapping_fn(samples: List[Data]) -> Tensor:
     """Stack y_arr tensors into [B, MAX_SEQ_LEN]."""
@@ -94,9 +94,9 @@ def _make_metric_fn(idx2vocab: List[str]):
     return metric_fn
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Public factory
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def get_code2_train_config(
     device: torch.device | None = None,

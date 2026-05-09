@@ -31,7 +31,7 @@ sys.path.insert(0, _ROOT)
 
 from data_utils.config_objects import DATASET_CONFIGS, TRAIN_CONFIGS  # noqa: E402
 from models.train import run_graph_transformer_experiments             # noqa: E402
-from table5.model import GraphTransModelAblation, READOUT_TYPES        # noqa: E402
+from nci_readout_ablation.model import GraphTransModelAblation, READOUT_TYPES        # noqa: E402
 
 
 def run_variant(
@@ -117,7 +117,7 @@ def main():
         )
         results[rt] = (mean, std)
 
-    # ── summary table ──────────────────────────────────────────────────────────
+    # -- summary table ----------------------------------------------------------
     print(f"\n{'='*60}")
     print(f"  Table 5 summary — {args.dataset}")
     print(f"{'='*60}")

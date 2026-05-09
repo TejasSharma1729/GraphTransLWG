@@ -6,6 +6,8 @@ Module to load datasets for graph learning, and to run experiments on the datase
 from .extract_datasets import get_graph_dataset
 from .tu_to_pyg import PyGAsTorchDataset, load_tudataset_as_torch_dataset, save_dataset_as_pt
 from .config_objects import DATASET_CONFIGS, TRAIN_CONFIGS
+from .code2_tokenization import build_code2_dataset
+from .code2_train_config import get_code2_train_config
 
 __all__ = [
     "get_graph_dataset",
@@ -14,4 +16,6 @@ __all__ = [
     "save_dataset_as_pt",
     "DATASET_CONFIGS",
     "TRAIN_CONFIGS",
+    "build_code2_dataset",
+    "get_code2_train_config"
 ]

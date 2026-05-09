@@ -16,7 +16,7 @@ ROOT_DIR = os.path.dirname(CUR_DIR)
 sys.path.append(ROOT_DIR)
 from models.full_model import GraphTransModel
 
-from trainers.base_trainer import BaseTrainer
+from deprecated_trainers.base_trainer import BaseTrainer
 
 TRAINER_REGISTRY: dict[str, Type[BaseTrainer]] = {}
 TRAINER_CLASS_NAMES: set[str] = set()

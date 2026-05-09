@@ -30,9 +30,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))   # GraphTransLWG/
 sys.path.insert(0, _ROOT)
 
-from code2.dataset import build_code2_dataset          # noqa: E402
-from code2.table4.train import run_experiment          # noqa: E402
-from code2.table4.configs import (                     # noqa: E402
+from data_utils.code2_tokenization import build_code2_dataset          # noqa: E402
+from code2_gnn_initialization_ablation.train import run_experiment          # noqa: E402
+from code2_gnn_initialization_ablation.configs import (                     # noqa: E402
     get_gnn_only_config,
     get_frozen_gnn_config,
     get_finetune_gnn_config,

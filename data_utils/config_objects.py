@@ -18,6 +18,7 @@ CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(CUR_DIR)
 sys.path.append(ROOT_DIR)
 
+from data_utils.code2_train_config import get_code2_train_config
 from models.full_model import GraphTransConfig, ModelTrainConfig, GraphTransModel
 from data_utils.extract_datasets import get_graph_dataset
 from data_utils.tu_to_pyg import PyGAsTorchDataset, load_tudataset_as_torch_dataset, save_dataset_as_pt
@@ -26,6 +27,9 @@ from data_utils.tu_to_pyg import PyGAsTorchDataset, load_tudataset_as_torch_data
 TORCH_DEVICE_STR: str = "cuda" if cuda.is_available() else "mps" if mps.is_available() else "cpu" # type: ignore
 TORCH_DEVICE = torch.device(TORCH_DEVICE_STR) # type: ignore
 TORCH_DTYPE = torch.float32
+
+
+_c2_dset_conf, _c2_train_conf = get_code2_train_config()
 
 DATASET_CONFIGS: Dict[str, GraphTransConfig] = {
     "NCI1": GraphTransConfig(
@@ -58,8 +62,9 @@ DATASET_CONFIGS: Dict[str, GraphTransConfig] = {
         device=TORCH_DEVICE,
         dtype=TORCH_DTYPE,
     ),
-    "ogbg-code2": GraphTransConfig(
-        x_dim=2,
+    "ogbg-code2": _c2_dset_conf,
+    "ogbg-molhiv": GraphTransConfig(
+        x_dim=3,
         num_transformer_layers=6,
         embed_dim=256,
         num_heads=8,
@@ -131,6 +136,10 @@ def unsupported_code2(*args: Any, **kwargs: Any) -> Any:
     )
 
 
+"""
+This gives ready-made config objects for direct use from `main.py`.
+Note: OGBG-code2 is unsupported from `main.py`; use the `code2/` directory for that.
+"""
 TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
     "NCI1": ModelTrainConfig(
         model_config=DATASET_CONFIGS["NCI1"],
@@ -160,13 +169,7 @@ TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
         scheduler="cosine",
         runs=20,
     ),
-    "ogbg-code2": ModelTrainConfig(
-        model_config=DATASET_CONFIGS["ogbg-code2"],
-        model_loader=lambda: unsupported_code2(),
-        dataset_loader=lambda: get_graph_dataset("ogbg-code2").to(TORCH_DEVICE_STR), # type: ignore
-        out_mapping_fn=unsupported_code2,
-        loss_fn=unsupported_code2,
-    ),
+    "ogbg-code2": _c2_train_conf,
     "ogbg-molhiv": ModelTrainConfig(
         model_config=DATASET_CONFIGS["ogbg-molhiv"],
         model_loader=lambda: GraphTransModel(DATASET_CONFIGS["ogbg-molhiv"]),

@@ -42,7 +42,7 @@ if __name__ == "__main__":
     dataset_name: str = args.dataset
 
     if dataset_name == "ogbg-code2":
-        from code2.train_config import get_code2_train_config
+        from data_utils.code2_train_config import get_code2_train_config
         config, train_config = get_code2_train_config(max_graphs=args.max_graphs)
     else:
         if dataset_name not in DATASET_CONFIGS:

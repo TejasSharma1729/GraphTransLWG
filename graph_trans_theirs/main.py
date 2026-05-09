@@ -19,7 +19,7 @@ import utils
 from data.adj_list import compute_adjacency_list_cached
 from dataset import DATASET_UTILS
 from models import get_model_and_parser
-from trainers import get_trainer_and_parser
+from deprecated_trainers import get_trainer_and_parser
 
 wandb.init(project="graph-aug")
 now = datetime.now()

@@ -100,13 +100,13 @@ class GraphTransConfig:
     num_mlp_layers: int | List[int] = 2
     mlp_hidden_dim: int | None = None
     dropout: float = 0.0
-    # ── code2 / sequence-prediction mode ──────────────────────────────────────
+    # -- code2 / sequence-prediction mode --------------------------------------
     num_node_types: int | None = None   # set for code2; enables ASTNodeEncoder
     num_node_attrs: int | None = None
     max_node_depth: int = 20
     max_seq_len: int | None = None      # set for code2; enables multi-head output
     num_vocab: int | None = None        # vocabulary size (num_vocab output heads)
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     device: torch.device = torch.device(TORCH_DEVICE)
     dtype: torch.dtype = torch.float32
 

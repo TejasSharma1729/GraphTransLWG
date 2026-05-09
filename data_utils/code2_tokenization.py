@@ -31,9 +31,9 @@ NUM_VOCAB   = 5000
 MAX_SEQ_LEN = 5
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Vocabulary helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def get_vocab_mapping(seq_list: List[List[str]], num_vocab: int) -> Tuple[Dict[str, int], List[str]]:
     """
@@ -84,9 +84,9 @@ def decode_arr_to_seq(arr: Tensor, idx2vocab: List[str]) -> List[str]:
     return [idx2vocab[int(i)] for i in arr.cpu()]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Edge augmentation  (matches reference GraphTrans implementation)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def augment_edge(data: Data) -> Data:
     """
@@ -120,9 +120,9 @@ def augment_edge(data: Data) -> Data:
     return data
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Full dataset builder
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def build_code2_dataset(max_graphs: int | None = None):
     """
@@ -153,7 +153,7 @@ def build_code2_dataset(max_graphs: int | None = None):
     val_idx   = split_idx["valid"].tolist()
     test_idx  = split_idx["test"].tolist()
 
-    # ── optional subsampling ──────────────────────────────────────────────────
+    # -- optional subsampling --------------------------------------------------
     if max_graphs is not None:
         import random as _random
         # Use random shuffle with fixed seed so subsamples are representative.
