@@ -8,6 +8,7 @@
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{xcolor}
+\usepackage{float}
 
 \title{CS-768 (Learning with Graphs) Course Project Report\\\large GraphTransLWG: Hybrid GNN--Transformer for Long-Range Graph Reasoning}
 \author{Eshaan Pareek (22B3986) \and Tejas Sharma (22B0909) \and Aditya Vema Reddy Kesari (22B3985) \and Matam Kushaal (23B1290)}
@@ -20,7 +21,7 @@
 \section{Introduction}
 %──────────────────────────────────────────────────────────────────
 
-Graph Neural Networks (GNNs) are powerful tools for learning from structured data, but they suffer from a fundamental tension: stacking more layers to widen the receptive field leads to oversmoothing and oversquashing, while shallow networks fail to model long-range dependencies~\cite{alon2021bottleneck}. This project implements a \textbf{GraphTrans-style} architecture~\cite{wu2021representing}, a hybrid design that combines a local GNN backbone with a global Transformer.
+Graph Neural Networks (GNNs) are powerful tools for learning from structured data, but they suffer from a fundamental tension: stacking more layers to widen the receptive field leads to oversmoothing and oversquashing, while shallow networks fail to model long-range dependencies~\cite{alon2021on}. This project implements a \textbf{GraphTrans-style} architecture~\cite{wu2022representinglongrangecontextgraph}, a hybrid design that combines a local GNN backbone with a global Transformer.
 
 Our implementation, \textsc{GraphTransLWG}, follows the paper's central design pattern---\texttt{[CLS]}-token readout, reachability-masked global attention, and pre-norm residual blocks---while introducing several implementation-level choices of its own: a custom edge-aware GNN layer, transitive-closure-based attention masking precomputed once per batch, and separate MLP weights for the \texttt{[CLS]} token. We evaluate on the \textsf{NCI} biological benchmarks and \textsf{OGB Code2}, and evaluate a readout ablation for the \texttt{[CLS]} embedding.
 
@@ -40,12 +41,12 @@ A standard GNN layer updates node $i$ as
 where $\bigoplus$ is a permutation-invariant aggregation operator. Stacking $k$ such layers gives a receptive field of $k$ hops, but deeper stacks collapse representations---a phenomenon called \emph{oversmoothing}.
 
 \paragraph{Global attention (long-range context).}
-Given hidden matrix $H\in\mathbb{R}^{N\times d}$ for all $N$ nodes, multi-head scaled dot-product attention computes
+Given hidden matrix $\mathbf{H}\in\mathbb{R}^{N\times d}$ for all $N$ nodes, multi-head scaled dot-product attention computes
 \[
-\mathbf{Q}=\mathbf{H} @ \mathbf{W}_Q^\top,\quad 
-\mathbf{K}=\mathbf{H} @ \mathbf{W}_K^\top,\quad 
-\mathbf{V}=\mathbf{H} @ \mathbf{W}_V^\top,\quad 
-\mathrm{Attn}(\textbf{H})=\mathrm{softmax}\!\left(\frac{\mathbf{Q} @ \mathbf{K}^\top}{\sqrt{d_h}}+ \mathbf{M}\right) @ \mathbf{V},
+\mathbf{Q}=\mathbf{H} @ \mathbf{W}_Q^\top,\quad
+\mathbf{K}=\mathbf{H} @ \mathbf{W}_K^\top,\quad
+\mathbf{V}=\mathbf{H} @ \mathbf{W}_V^\top,\quad
+\mathrm{Attn}(\mathbf{H})=\mathrm{softmax}\!\left(\frac{\mathbf{Q} @ \mathbf{K}^\top}{\sqrt{d_h}}+ \mathbf{M}\right) @ \mathbf{V},
 \]
 where $M$ is an additive attention bias (mask). Without sequence positional encodings, attention is permutation-equivariant over node order; after a graph-level readout such as \texttt{[CLS]}, this gives a permutation-invariant graph prediction. Every node can attend to every reachable node permitted by the mask in a single attention layer, bypassing part of the message-passing depth bottleneck.
 
@@ -174,7 +175,7 @@ All experiments use Adam with $(\beta_1,\beta_2) = (0.9, 0.999)$. A cosine-annea
 
 \subsection{FLAG Adversarial Training (\texttt{trainers/flag\_trainer.py})}
 
-The repository contains a FLAG~\cite{kong2020flag} trainer, which augments training by injecting adversarial perturbations $\delta$ into node embeddings, computed via $m$ projected gradient steps:
+The repository contains a FLAG~\cite{kong2021flag} trainer, which augments training by injecting adversarial perturbations $\delta$ into node embeddings, computed via $m$ projected gradient steps:
 \[
 \delta^{t+1} = \Pi_{\|\cdot\|_\infty \leq \epsilon}\!\left(\delta^t + \alpha\,\mathrm{sign}(\nabla_\delta \mathcal{L}(\theta,\delta^t))\right),
 \]
@@ -220,6 +221,9 @@ with step size $\alpha$ (default $8\times10^{-3}$) and $m=3$ steps. However, thi
   \item \texttt{code2\_gnn\_initialization\_ablation/configs.py}: config factories for the \textsf{Code2} dataset --  GNN-only/frozen-GNN/fine-tuned-GNN ablation -- kept as auxiliary code.
   \item \texttt{nci\_readout\_ablation/model.py}, \texttt{nci\_readout\_ablation/main.py}: ablation code for \textsf{NCI1}/\textsf{NCI109} variants.
   \item \texttt{trainers/flag\_trainer.py}: auxiliary FLAG adversarial perturbation trainer, not used in the main \texttt{models/train.py} loop.
+  \item \texttt{main.py}: The main entry point for training and testing \textsc{GraphTransLWG} models on graph datasets.
+  \item \texttt{create\_env.sh}: Script that auto-generates the conda environment \texttt{graphTrans} for running this project.
+  \item \texttt{graph\_trans\_theirs}: A copy of the implementation of the original \textsc{GraphTrans} ~\cite{wu2022representinglongrangecontextgraph} algorithm, for reference (not used by our code).
 \end{itemize}
 
 %──────────────────────────────────────────────────────────────────
@@ -237,24 +241,24 @@ Architecture: 4 transformer layers; per block: 3 GNN layers, 8-head attention (h
 
 \begin{table}[h]
 \centering
-\caption{NCI1 and NCI109 test accuracy (\%). Paper baselines reproduced from~\cite{wu2021representing} }
+\caption{NCI1 and NCI109 test accuracy (\%). Paper baselines reproduced from~\cite{wu2022representinglongrangecontextgraph} }
 \label{tab:nci}
 \begin{tabular}{lccrr}
 \toprule
 \textbf{Model} & \textbf{GNN Type} & \textbf{GNN layers} & \textbf{NCI1 (\%)} & \textbf{NCI109 (\%)} \\
 \midrule
-Set2Set~\cite{vinyals2016order}   & GCN & 3 & $68.6\pm1.9$ & $69.8\pm1.2$ \\
-SortPool~\cite{zhang2018end}      & GCN & 3 & $73.8\pm1.0$ & $74.0\pm1.2$ \\
-SAGPool$_h$~\cite{lee2019self}    & GCN & 3 & $67.5\pm1.1$ & $67.9\pm1.4$ \\
-SAGPool$_g$~\cite{lee2019self}    & GCN & 3 & $74.2\pm1.2$ & $74.1\pm0.8$ \\
+Set2Set~\cite{vinyals2016ordermatterssequencesequence}   & GCN & 3 & $68.6\pm1.9$ & $69.8\pm1.2$ \\
+SortPool~\cite{10.5555/3504035.3504579}      & GCN & 3 & $73.8\pm1.0$ & $74.0\pm1.2$ \\
+SAGPool$_h$~\cite{pmlr-v97-lee19c}    & GCN & 3 & $67.5\pm1.1$ & $67.9\pm1.4$ \\
+SAGPool$_g$~\cite{pmlr-v97-lee19c}    & GCN & 3 & $74.2\pm1.2$ & $74.1\pm0.8$ \\
 \midrule
-Errica et al.~\cite{errica2020fair}     & GIN & 8 & $80.0\pm1.4$ & --- \\
-Alon \& Yahav~\cite{alon2021bottleneck} & GIN & 8 & $81.5\pm1.2$ & --- \\
+Errica et al.~\cite{Errica2020A}     & GIN & 8 & $80.0\pm1.4$ & --- \\
+Alon \& Yahav~\cite{alon2021on} & GIN & 8 & $81.5\pm1.2$ & --- \\
 \midrule
-Transformer~\cite{vaswani2017attention}      & --- & --- & $68.5\pm2.6$ & $70.1\pm2.3$ \\
+Transformer~\cite{NIPS2017_3f5ee243}      & --- & --- & $68.5\pm2.6$ & $70.1\pm2.3$ \\
 \midrule
-GraphTrans (small)~\cite{wu2021representing} & GCN & 3   & $81.3\pm1.9$ & $79.2\pm2.2$ \\
-GraphTrans (large)~\cite{wu2021representing} & GIN & 4   & $\mathbf{82.6\pm1.2}$ & $\mathbf{82.3\pm2.6}$ \\
+GraphTrans (small)~\cite{wu2022representinglongrangecontextgraph} & GCN & 3   & $81.3\pm1.9$ & $79.2\pm2.2$ \\
+GraphTrans (large)~\cite{wu2022representinglongrangecontextgraph} & GIN & 4   & $\mathbf{82.6\pm1.2}$ & $\mathbf{82.3\pm2.6}$ \\
 \midrule
 \textbf{GraphTransLWG (ours)} & custom & $3^\dagger$
   & $\mathbf{78.59\pm1.79}$ & $\mathbf{76.47\pm1.42}$ \\
@@ -266,33 +270,33 @@ GraphTrans (large)~\cite{wu2021representing} & GIN & 4   & $\mathbf{82.6\pm1.2}$
 
 \subsection{Computer Programming Benchmark (\textsf{OGBG Code2})}
 
-\paragraph{Dataset.}
-\texttt{ogbg-code2} contains 45{,}741 graphs---Abstract Syntax Trees of Python method bodies---with 125 nodes on average. The task is sequence prediction: given the AST, predict the sub-tokens of the method name. Performance is measured by token-level F1 score using the OGB evaluator. We use the standard fixed OGB splits.
+\paragraph{Dataset}
+\texttt{ogbg-code2} contains 45{,}741 graphs - Abstract Syntax Trees of Python method bodies - with 125 nodes on average. The task is sequence prediction: given the AST, predict the sub-tokens of the method name. Performance is measured by token-level F1 score using the OGB evaluator. We use the standard fixed OGB splits.
 
 \paragraph{Our experimental setup.}
-\textit{30 epochs}, batch size \textit{16}, Adam, lr $= 10^{-4}$, weight decay $= 0$, cosine annealing schedule, \textit{5 independent runs}.
+\textit{10 epochs}, batch   size \textit{4}, Adam, lr $= 10^{-4}$, weight decay $= 0$, cosine annealing schedule, \textit{2 independent runs}.
 Architecture: 4 transformer layers; per block: 4 GNN layers, 6-head attention (head dim 50), 2-layer MLP (hidden 600); embed dim 300; dropout 0.3. Input via \texttt{ASTNodeEncoder} (node-type + attribute + depth embeddings summed). Output: $T_\text{max}=5$ independent linear heads over vocabulary.
 
 % \begin{table}[h]
 % \centering
-% \caption{OGB Code2 valid/test F1 score. Baselines from OGB leaderboard~\cite{hu2020ogb}. Our result to be filled in~\textcolor{blue}{blue}.}
+% \caption{OGB Code2 valid/test F1 score. Baselines from OGB leaderboard~\cite{NEURIPS2020_fb60d411}. Our result to be filled in~\textcolor{blue}{blue}.}
 % \label{tab:code2}
 % \begin{tabular}{lrr}
 % \toprule
 % \textbf{Model} & \textbf{Valid F1} & \textbf{Test F1} \\
 % \midrule
-% GIN~\cite{xu2019powerful}             & $0.1376\pm0.0016$ & $0.1495\pm0.0023$ \\
-% GCN~\cite{kipf2017semi}               & $0.1399\pm0.0017$ & $0.1507\pm0.0018$ \\
-% GIN-Virtual~\cite{xu2019powerful}     & $0.1439\pm0.0026$ & $0.1581\pm0.0020$ \\
-% GCN-Virtual~\cite{kipf2017semi}       & $0.1461\pm0.0013$ & $0.1595\pm0.0018$ \\
-% PNA~\cite{corso2020principal}         & $0.1453\pm0.0025$ & $0.1570\pm0.0032$ \\
+% GIN~\cite{xu2018how}             & $0.1376\pm0.0016$ & $0.1495\pm0.0023$ \\
+% GCN~\cite{kipf2017semisupervisedclassificationgraphconvolutional}               & $0.1399\pm0.0017$ & $0.1507\pm0.0018$ \\
+% GIN-Virtual~\cite{xu2018how}     & $0.1439\pm0.0026$ & $0.1581\pm0.0020$ \\
+% GCN-Virtual~\cite{kipf2017semisupervisedclassificationgraphconvolutional}       & $0.1461\pm0.0013$ & $0.1595\pm0.0018$ \\
+% PNA~\cite{NEURIPS2020_99cad265}         & $0.1453\pm0.0025$ & $0.1570\pm0.0032$ \\
 % DAGNN~\cite{thost2021directed}        & $0.1607\pm0.0040$ & $0.1751\pm0.0049$ \\
 % \midrule
-% Transformer~\cite{vaswani2017attention}            & $0.1546\pm0.0018$ & $0.1670\pm0.0015$ \\
+% Transformer~\cite{NIPS2017_3f5ee243}            & $0.1546\pm0.0018$ & $0.1670\pm0.0015$ \\
 % \midrule
-% GraphTrans (GCN)~\cite{wu2021representing}         & $0.1599\pm0.0009$ & $0.1751\pm0.0015$ \\
-% GraphTrans (PNA)~\cite{wu2021representing}         & $0.1622\pm0.0025$ & $0.1765\pm0.0033$ \\
-% GraphTrans (GCN-Virtual)~\cite{wu2021representing} & $\mathbf{0.1661\pm0.0012}$ & $\mathbf{0.1830\pm0.0024}$ \\
+% GraphTrans (GCN)~\cite{wu2022representinglongrangecontextgraph}         & $0.1599\pm0.0009$ & $0.1751\pm0.0015$ \\
+% GraphTrans (PNA)~\cite{wu2022representinglongrangecontextgraph}         & $0.1622\pm0.0025$ & $0.1765\pm0.0033$ \\
+% GraphTrans (GCN-Virtual)~\cite{wu2022representinglongrangecontextgraph} & $\mathbf{0.1661\pm0.0012}$ & $\mathbf{0.1830\pm0.0024}$ \\
 % \midrule
 % \textbf{GraphTransLWG (ours)} & \textcolor{blue}{0.1735\mp0.03} & \textcolor{blue}{??} \\
 % \bottomrule
@@ -301,24 +305,24 @@ Architecture: 4 transformer layers; per block: 4 GNN layers, 6-head attention (h
 
 \begin{table}[H]
 \centering
-\caption{OGB Code2 \textbf{validation} F1 score. Baselines from OGB leaderboard~\cite{hu2020ogb} (originally reported on the test set; our result is validation F1 only, so direct comparison should be interpreted with caution).}
+\caption{OGB Code2 \textbf{validation} F1 score. Baselines from OGB leaderboard~\cite{NEURIPS2020_fb60d411} (this table contains validation F1 only)}
 \label{tab:code2}
 \begin{tabular}{lr}
 \toprule
 \textbf{Model} & \textbf{Mean F1 $\pm$ std dev} \\
 \midrule
-GIN~\cite{xu2019powerful}             & $0.1376\pm0.0016$ \\
-GCN~\cite{kipf2017semi}               & $0.1399\pm0.0017$ \\
-GIN-Virtual~\cite{xu2019powerful}     & $0.1439\pm0.0026$ \\
-GCN-Virtual~\cite{kipf2017semi}       & $0.1461\pm0.0013$ \\
-PNA~\cite{corso2020principal}         & $0.1453\pm0.0025$ \\
+GIN~\cite{xu2018how}             & $0.1376\pm0.0016$ \\
+GCN~\cite{kipf2017semisupervisedclassificationgraphconvolutional}               & $0.1399\pm0.0017$ \\
+GIN-Virtual~\cite{xu2018how}     & $0.1439\pm0.0026$ \\
+GCN-Virtual~\cite{kipf2017semisupervisedclassificationgraphconvolutional}       & $0.1461\pm0.0013$ \\
+PNA~\cite{NEURIPS2020_99cad265}         & $0.1453\pm0.0025$ \\
 DAGNN~\cite{thost2021directed}        & $0.1607\pm0.0040$ \\
 \midrule
-Transformer~\cite{vaswani2017attention} & $0.1546\pm0.0018$ \\
+Transformer~\cite{NIPS2017_3f5ee243} & $0.1546\pm0.0018$ \\
 \midrule
-GraphTrans (GCN)~\cite{wu2021representing}         & $0.1599\pm0.0009$ \\
-GraphTrans (PNA)~\cite{wu2021representing}         & $0.1622\pm0.0025$ \\
-GraphTrans (GCN-Virtual)~\cite{wu2021representing} & ${0.1661\pm0.0012}$ \\
+GraphTrans (GCN)~\cite{wu2022representinglongrangecontextgraph}         & $0.1599\pm0.0009$ \\
+GraphTrans (PNA)~\cite{wu2022representinglongrangecontextgraph}         & $0.1622\pm0.0025$ \\
+GraphTrans (GCN-Virtual)~\cite{wu2022representinglongrangecontextgraph} & ${0.1661\pm0.0012}$ \\
 \midrule
 \textbf{GraphTransLWG (ours)} & $\mathbf{0.1735\pm0.03}$ \\
 \bottomrule
@@ -363,23 +367,13 @@ These observations suggest that while a standalone \texttt{[CLS]} token may not 
 \section{Conclusion}
 %──────────────────────────────────────────────────────────────────
 
-We implemented \textsc{GraphTransLWG}, a GraphTrans-style architecture~\cite{wu2021representing} with several implementation-level contributions: (i) a custom edge-aware GNN layer that incorporates pairwise edge embeddings alongside neighbour aggregation; (ii) transitive-closure-based attention masking precomputed once per batch and reused across all $L$ transformer blocks; (iii) separate MLP weights for the \texttt{[CLS]} token; and (iv) a pre-norm residual structure throughout. Experiments on \textsf{NCI1}, \textsf{NCI109}, and \textsf{OGB Code2} compare our implementation against standard baselines, while the readout ablation (Table~\ref{tab:ablation}) evaluates how different graph-summary strategies affect \textsc{GraphTransLWG}.
+We implemented \textsc{GraphTransLWG}, a GraphTrans-style architecture~\cite{wu2022representinglongrangecontextgraph} with several implementation-level contributions: (i) a custom edge-aware GNN layer that incorporates pairwise edge embeddings alongside neighbour aggregation; (ii) transitive-closure-based attention masking precomputed once per batch and reused across all $L$ transformer blocks; (iii) separate MLP weights for the \texttt{[CLS]} token; and (iv) a pre-norm residual structure throughout. Experiments on \textsf{NCI1}, \textsf{NCI109}, and \textsf{OGB Code2} compare our implementation against standard baselines, while the readout ablation (Table~\ref{tab:ablation}) evaluates how different graph-summary strategies affect \textsc{GraphTransLWG}.
 
+\section*{AI use note}
+We used Claude code in generating docstrings, JIT-scripts for the batch-utils (efficient processing of a batch of input graphs, versus python loops at every layer) and in the code for tokenization of the \textsc{OGB Code2} dataset and handling of ASTs. The project ideation was ours, and we did not reuse the original repo's code.
 
-\begin{thebibliography}{99}
-\bibitem{wu2021representing} Z.~Wu, P.~Jain, M.~A.~Wright, A.~Mirhoseini, J.~E.~Gonzalez, I.~Stoica. Representing Long-Range Context for Graph Neural Networks with Global Attention. \textit{NeurIPS 2021}.
-\bibitem{vaswani2017attention} A.~Vaswani et al. Attention is All You Need. \textit{NeurIPS 2017}.
-\bibitem{xu2019powerful} K.~Xu, W.~Hu, J.~Leskovec, S.~Jegelka. How Powerful are Graph Neural Networks? \textit{ICLR 2019}.
-\bibitem{kipf2017semi} T.~N.~Kipf, M.~Welling. Semi-Supervised Classification with Graph Convolutional Networks. \textit{ICLR 2017}.
-\bibitem{corso2020principal} G.~Corso et al. Principal Neighbourhood Aggregation for Graph Nets. \textit{NeurIPS 2020}.
-\bibitem{thost2021directed} V.~Thost, J.~Chen. Directed Acyclic Graph Neural Networks. \textit{ICLR 2021}.
-\bibitem{hu2020ogb} W.~Hu et al. Open Graph Benchmark: Datasets for Machine Learning on Graphs. \textit{NeurIPS 2020}.
-\bibitem{lee2019self} J.~Lee, I.~Lee, J.~Kang. Self-Attention Graph Pooling. \textit{ICML 2019}.
-\bibitem{vinyals2016order} O.~Vinyals, S.~Bengio, M.~Kudlur. Order Matters: Sequence to Sequence for Sets. \textit{ICLR 2016}.
-\bibitem{zhang2018end} M.~Zhang, Z.~Cui, M.~Neumann, Y.~Chen. An End-to-End Deep Learning Architecture for Graph Classification. \textit{AAAI 2018}.
-\bibitem{errica2020fair} F.~Errica, M.~Podda, D.~Bacciu, A.~Micheli. A Fair Comparison of Graph Neural Networks for Graph Classification. \textit{ICLR 2020}.
-\bibitem{alon2021bottleneck} U.~Alon, E.~Yahav. On the Bottleneck of Graph Neural Networks and its Practical Implications. \textit{ICLR 2021}.
-\bibitem{kong2020flag} K.~Kong, G.~Li, M.~Ding, Z.~Wu, C.~Zhu, B.~Ghanem, G.~Taylor, T.~Goldstein. FLAG: Adversarial Data Augmentation for Graph Neural Networks. \textit{arXiv 2020}.
-\end{thebibliography}
+\newpage
+\bibliographystyle{plain}
+\bibliography{refs}
 
 \end{document}
