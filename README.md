@@ -41,3 +41,6 @@ Contains trained PyTorch models saved in `.pt` form (may not be in the repo)
 
 ### Directory `dataset`
 Contains stored datasets for efficient reuse.
+
+### Directory `graph_trans_theirs`
+A copy of the original [GraphTrans](https://github.com/ucbrise/graphtrans) repository, for reference.
