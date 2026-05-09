@@ -2,8 +2,9 @@
 
 from typing import List, Tuple, Dict, Set, Iterable, Callable, Literal, Optional, Any, Union
 from tqdm import tqdm, trange
+from dataclasses import dataclass, field, asdict, replace
 
-import sys, os, gc
+import sys, os, gc, argparse
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(CUR_DIR)
 sys.path.append(ROOT_DIR)
@@ -24,6 +25,8 @@ from models.attention import AttentionLayer
 from models.mlp import MLP
 from models.transformer import TransformerLayer, Transformer
 from models.full_model import GraphTransConfig, GraphTransModel, ModelTrainConfig
+
+from data_utils.config_objects import DATASET_CONFIGS, TRAIN_CONFIGS
 
     
 def train_graph_transformer(
@@ -69,3 +72,70 @@ def train_graph_transformer(
         pbar.set_postfix({"loss": loss.item()}) # update the progress bar with the current loss
 
     return model
+
+
+
+def main(
+    dataset_name: str,
+    batch_size: Optional[int] = None,
+    num_epochs: Optional[int] = None,
+    learning_rate: Optional[float] = None,
+    save_path: Optional[str] = None,
+) -> None:
+    """
+    Main function to train the Graph Transformer model on a specified dataset -- CLI-compatible.
+
+    Args:
+        dataset_name: The name of the dataset to train on (e.g., NCI1, NCI109, ogbg-code2) (required).
+        batch_size: Batch size for training (default: 32 for most datasets, see config).
+        num_epochs: Number of epochs to train for (default: 1 for most datasets, see config).
+        learning_rate: Learning rate for training (default: 0.0001 for most datasets, see config).
+        save_path: Directory to save the trained model checkpoint (default: checkpoints).
+    """
+    if dataset_name not in DATASET_CONFIGS:
+        raise ValueError(f"Dataset {dataset_name} not found in DATASET_CONFIGS. Available datasets: {list(DATASET_CONFIGS.keys())}")
+    
+    config: GraphTransConfig = DATASET_CONFIGS[dataset_name]
+    train_config: ModelTrainConfig = TRAIN_CONFIGS[dataset_name]
+    
+    # Override training hyperparameters if provided via command line
+    overrides = {}
+    if batch_size is not None:
+        overrides["batch_size"] = batch_size
+    if num_epochs is not None:
+        overrides["num_epochs"] = num_epochs
+    if learning_rate is not None:
+        overrides["learning_rate"] = learning_rate
+    
+    if overrides:
+        train_config = replace(train_config, **overrides)
+
+    model = train_graph_transformer(train_config)
+
+    os.makedirs(save_path, exist_ok=True)
+    save_name = f"{dataset_name}_model.pt"
+    save_file = os.path.join(save_path, save_name)
+    torch.save(
+        {
+            "dataset": dataset_name,
+            "model_state_dict": model.state_dict(),
+            "model_config": asdict(train_config.model_config),
+            "train_config": {
+                "num_epochs": train_config.num_epochs,
+                "batch_size": train_config.batch_size,
+                "learning_rate": train_config.learning_rate,
+            },
+        },
+        save_file,
+    )
+    print(f"Saved model checkpoint to {save_file}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train the Graph Transformer model on a given dataset.")
+    parser.add_argument("--dataset", "-d", type=str, required=True, help="The name of the dataset to train on (e.g., NCI1, NCI109, ogbg-code2).")
+    parser.add_argument("--batch_size", "-b", type=int, default=None, help="Batch size for training (default: 32 for most datasets, see config).")
+    parser.add_argument("--num_epochs", "-e", type=int, default=None, help="Number of epochs to train for (default: 1).")
+    parser.add_argument("--learning_rate", "-l", type=float, default=None, help="Learning rate for the optimizer (default: 0.001).")
+    parser.add_argument("--save_path", type=str, default="checkpoints", help="Directory to save the trained model checkpoint (default: checkpoints).")
+    args = parser.parse_args()
+    main(args.dataset, args.batch_size, args.num_epochs, args.learning_rate, args.save_path)

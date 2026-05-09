@@ -25,7 +25,7 @@ from data_utils.tu_to_pyg import PyGAsTorchDataset, load_tudataset_as_torch_data
 
 TORCH_DEVICE_STR: str = "cuda" if cuda.is_available() else "mps" if mps.is_available() else "cpu" # type: ignore
 TORCH_DEVICE = torch.device(TORCH_DEVICE_STR) # type: ignore
-TORCH_DTYPE = torch.bfloat16
+TORCH_DTYPE = torch.float32
 
 DATASET_CONFIGS: Dict[str, GraphTransConfig] = {
     "NCI1": GraphTransConfig(
@@ -68,7 +68,7 @@ DATASET_CONFIGS: Dict[str, GraphTransConfig] = {
         dtype=TORCH_DTYPE,
     ),
     "ogbg-molhiv": GraphTransConfig(
-        x_dim=3,
+        x_dim=9,
         num_transformer_layers=6,
         embed_dim=256,
         num_heads=8,
@@ -133,7 +133,7 @@ TRAIN_CONFIGS: Dict[str, ModelTrainConfig] = {
         model_loader=lambda: GraphTransModel(DATASET_CONFIGS["ogbg-molhiv"]),
         dataset_loader=lambda: get_graph_dataset("ogbg-molhiv").to(TORCH_DEVICE_STR), # type: ignore
         out_mapping_fn=lambda x: x,
-        loss_fn=lambda x, y: F.binary_cross_entropy(x, y),
+        loss_fn=lambda x, y: F.binary_cross_entropy(x.float(), y.float()),
     ),
     "ogbg-molpcba": ModelTrainConfig(
         model_config=DATASET_CONFIGS["ogbg-molpcba"],

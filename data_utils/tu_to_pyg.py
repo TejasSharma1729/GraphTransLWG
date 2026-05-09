@@ -60,7 +60,7 @@ def save_dataset_as_pt(dataset: PyGAsTorchDataset, out_path: str) -> list[Data]:
     """
     Save a `PyGAsTorchDataset` as a materialized `.pt` file of `list[Data]`.
 
-    Args:
+    Args
         dataset: The PyGAsTorchDataset to save
         out_path: The output path to save the .pt file to
 
