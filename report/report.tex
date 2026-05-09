@@ -7,6 +7,8 @@
 \usepackage{enumitem}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{xcolor}
+
 \title{CS-768 (Learning with Graphs) Course Project Report\\\large GraphTransLWG: Hybrid GNN--Transformer for Long-Range Graph Reasoning}
 \author{Eshaan Pareek (22B3986) \and Tejas Sharma (22B0909) \and Aditya Vema Reddy Kesari (22B3985) \and Matam Kushaal (23B1290)}
 \date{}
@@ -14,114 +16,370 @@
 \begin{document}
 \maketitle
 
+%──────────────────────────────────────────────────────────────────
 \section{Introduction}
-Graph Neural Networks (GNNs) aggregate neighborhood information using message passing, but depth increases can cause oversmoothing and oversquashing. This limits long-range dependency modeling. Our project studies a GraphTrans-style hybrid architecture that interleaves local graph convolutions with global self-attention to capture both local topology and distant interactions.
+%──────────────────────────────────────────────────────────────────
 
+Graph Neural Networks (GNNs) are powerful tools for learning from structured data, but they suffer from a fundamental tension: stacking more layers to widen the receptive field leads to oversmoothing and oversquashing, while shallow networks fail to model long-range dependencies~\cite{alon2021bottleneck}. This project implements a \textbf{GraphTrans-style} architecture~\cite{wu2021representing}, a hybrid design that combines a local GNN backbone with a global Transformer.
+
+Our implementation, \textsc{GraphTransLWG}, follows the paper's central design pattern---\texttt{[CLS]}-token readout, reachability-masked global attention, and pre-norm residual blocks---while introducing several implementation-level choices of its own: a custom edge-aware GNN layer, transitive-closure-based attention masking precomputed once per batch, and separate MLP weights for the \texttt{[CLS]} token. We evaluate on the \textsf{NCI} biological benchmarks and \textsf{OGB Code2}, and evaluate a readout ablation for the \texttt{[CLS]} embedding.
+
+
+%──────────────────────────────────────────────────────────────────
 \section{Problem Setup}
-Given a graph $G=(V,E)$ with node features $X\in\mathbb{R}^{|V|\times d_x}$ and graph label $y$, learn $f_\theta(G)\to\hat{y}$ for graph-level prediction.
+%──────────────────────────────────────────────────────────────────
 
-\paragraph{Message Passing (local bias).}
-A generic layer updates node $i$ as:
+Given a graph $G=(V,E)$ with per-node feature matrix $\mathbf{X}\in\mathbb{R}^{|V|\times d_x}$ and graph-level label $y$, learn $f_\theta(G)\to\hat{y}$ for whole-graph classification or sequence prediction.
+
+\paragraph{Message passing (local bias).}
+A standard GNN layer updates node $i$ as
 \[
-\mathbf{h}^{(\ell+1)}_i = \phi\left(\mathbf{h}^{(\ell)}_i,\; \square_{j\in\mathcal{N}(i)} \psi(\mathbf{h}^{(\ell)}_i,\mathbf{h}^{(\ell)}_j,\mathbf{e}_{ij})\right),
+\vec{h}^{(\ell+1)}_i = \phi\!\left(\vec{h}^{(\ell)}_i,\;
+  \bigoplus_{j\in\mathcal{N}(i)} \psi\!\left(\vec{h}^{(\ell)}_i,\,\vec{h}^{(\ell)}_j\right)\right),
 \]
-where $\square$ is an aggregation operator.
+where $\bigoplus$ is a permutation-invariant aggregation operator. Stacking $k$ such layers gives a receptive field of $k$ hops, but deeper stacks collapse representations---a phenomenon called \emph{oversmoothing}.
 
 \paragraph{Global attention (long-range context).}
-With hidden matrix $H\in\mathbb{R}^{n\times d}$:
+Given hidden matrix $H\in\mathbb{R}^{N\times d}$ for all $N$ nodes, multi-head scaled dot-product attention computes
 \[
-Q=HW_Q,\quad K=HW_K,\quad V=HW_V,
+\mathbf{Q}=\mathbf{H} @ \mathbf{W}_Q^\top,\quad 
+\mathbf{K}=\mathbf{H} @ \mathbf{W}_K^\top,\quad 
+\mathbf{V}=\mathbf{H} @ \mathbf{W}_V^\top,\quad 
+\mathrm{Attn}(\textbf{H})=\mathrm{softmax}\!\left(\frac{\mathbf{Q} @ \mathbf{K}^\top}{\sqrt{d_h}}+ \mathbf{M}\right) @ \mathbf{V},
 \]
-\[
-\mathrm{Attn}(H)=\mathrm{softmax}\left(\frac{QK^\top}{\sqrt{d_h}}\right)V.
-\]
-This enables every node to interact with every other node in one layer.
+where $M$ is an additive attention bias (mask). Without sequence positional encodings, attention is permutation-equivariant over node order; after a graph-level readout such as \texttt{[CLS]}, this gives a permutation-invariant graph prediction. Every node can attend to every reachable node permitted by the mask in a single attention layer, bypassing part of the message-passing depth bottleneck.
 
+%──────────────────────────────────────────────────────────────────
 \section{Architecture}
-The implemented model follows:
+%──────────────────────────────────────────────────────────────────
+
+The \texttt{GraphTransModel} (in \texttt{models/full\_model.py}) consists of:
+
 \begin{enumerate}[leftmargin=1.5em]
-    \item Input projection: $X\mapsto H^{(0)}\in\mathbb{R}^{n\times d}$.
-    \item Add a graph-level \texttt{[CLS]} token per graph for pooling.
-    \item Repeat for $L$ blocks:
-    \begin{itemize}
-        \item GNN sublayer for local structure encoding.
-        \item Multi-head self-attention sublayer for global context.
-        \item Position-wise MLP sublayer.
-        \item Residual paths and normalization in transformer stack.
-    \end{itemize}
-    \item Readout from \texttt{[CLS]} embedding and linear head for logits.
+  \item \textbf{CLS token injection}: append a \texttt{[CLS]} embedding to the graph (or each graph in the batch), prepare the batch edge index and the CLS mask.
+  \item \textbf{Input embedding}: project raw node features to dimension $d$, and use a learnable \texttt{[CLS]} embedding for each CLS node in the batch.
+  \item \textbf{Transformer stack}: $L$ transformer blocks, each containing a GNN sublayer, a multi-head attention sublayer, and a feedforward MLP sublayer with pre-norm residuals.
+  \item \textbf{Readout}: extract the \texttt{[CLS]} embedding and apply a linear output head (or output heads, in case of \textsf{OGBG Code2})
 \end{enumerate}
 
-\subsection{The input projection layer}
-This layer involves a linear transformation of the input node features to the embedding dimension $E$, typically of a higher dimension. This does not account for the discreteness of values of individual input features (that will explode the input dimension). Further, CLS tokens are initialized as a learnable parameter vector of same embedding dimension $E$, and have no input features. For a batch, one CLS token is added per graph.
+\subsection{Batch Packing (\texttt{models/batch\_utils.py})}
 
-\subsection{The GNN sublayer}
-Each transformer layer contains a GNN, an Attention Layer and an MLP. The GNN layer typically as 2 sub-layers of message passing. The CLS tokens are completely ignored in the GNN layer and the original embedding is passed directly to the attention layer.
+Before any forward pass, \texttt{pack\_graph\_batch} adds a CLS node to each graph, and then concatenates all graphs in the batch into a single flat vertex tensor and precomputes three structures that are reused across all $L$ transformer layers:
 
-Each GNN layer does the following math, with $\vec{h}_{l, u}$ representing the embedding of node $u$ after layer $l$ (where $l = 0$ signifies the input embeddings per node and $\mathcal{N}(u)$ is the set of neighbors of node $u$):
-\begin{align}
-    \vec{\bar{h}}_{l, u} &= \vec{h}_{l, u} @ \mathbf{W}_{1, l}^{T} \\
-    \vec{e}_{l;\ (u, v)} &= \left(\vec{\bar{h}}_{l, u} \| \vec{\bar{h}}_{l, v}\right) @ \mathbf{W}_{2, l}^{T} \\
-    \vec{n}_{l, u} &= \sum_{v\in\mathcal{N}(u)} \vec{e}_{l;\ (u, v)} \\
-    \vec{m}_{l, u} &= \sum_{v\in\mathcal{N}(u)} \vec{\bar{h}}_{l, v} \\
-    \vec{g}_{l, u} &= \mathrm{GELU}(\vec{\bar{h}}_{l, u} \| \vec{n}_{l, u} \| \vec{m}_{l, u}) \\
-    \vec{h}_{l+1, u} &= \vec{g}_{l, u} @ \mathbf{W}_{4, l}^{T}
-\end{align}
-
-\subsection{The attention sublayer}
-The attention sublayer is a standard multi-head self-attention mechanism. The CLS token is included in the attention computation, allowing it to attend to all nodes and aggregate global information. The attention output is then passed through a position-wise MLP and residual connections before the next block.
-
-Note that among other non-CLS nodes, the attention mask may be restricted or scaled to reduce importance of interaction among distant nodes, but the CLS token can attend to all nodes without restriction.
-
-Also, cross-graph attention in a batch is disabled.
-
-\subsection{The MLP sublayer}
-The MLP sublayer consists of a $L_{MLP} = 2$-layer feedforward network with a non-linear activation (e.g., GELU) in between. It is applied position-wise to the output of the attention sublayer, meaning it processes each node's embedding independently.
-
-Seperate set of parameters are used for the CLS token for correctly performing computations on the CLS token embedding (may be different from the computations on node embeddings).
-
-\section{Implementation Mapping to Repository}
 \begin{itemize}
-    \item \texttt{models/full\_model.py}: \texttt{GraphTransConfig}, \texttt{GraphTransModel}, \texttt{ModelTrainConfig}, CLS pooling path.
-    \item \texttt{models/transformer.py}: transformer block composition.
-    \item \texttt{models/gnn.py}: local message-passing layers.
-    \item \texttt{models/attention.py}: attention mechanism implementation.
-    \item \texttt{models/train.py}: training loop with optimizer/loss/backprop.
-    \item \texttt{data\_utils/config\_objects.py}: dataset and training configuration objects.
-    \item \texttt{data\_utils/dataset\_utils.py}: dataset loading and preprocessing utilities.
-    \item \texttt{trainers/base\_trainer.py}: generic trainer with grad clipping + scheduler hooks.
-    \item \texttt{trainers/flag\_trainer.py}: FLAG adversarial perturbation training.
+    \item \textbf{\texttt{cls\_mask}}: a boolean vector marking the CLS positions. For a batch of graphs with $[n_1, n_2, \ldots]$ nodes, the CLS of graph $i$ sits at index $\sum_{j<i}(n_j+1) + n_i$.
+    \item \textbf{\texttt{edge\_index}}: packed, offset-corrected edge list for the whole batch.
+    \item \textbf{\texttt{attn\_factors}}: the \emph{transitive closure} of the adjacency matrix (plus CLS connections), computed via fixed-point iteration initialised from the identity matrix $\mathbf{I}$: $\mathbf{A}^* \leftarrow \mathrm{clamp}(\mathbf{A}^*\cdot \mathbf{A}, 1)$ until convergence. Entry $(i,j)=1$ iff node $j$ is reachable from node $i$ in zero or more hops (within the same graph); cross-graph entries remain 0. Its log is passed as an additive bias to \texttt{scaled\_dot\_product\_attention}, driving unreachable pairs to $-\infty$.
+    \begin{itemize}
+        \item It the parameter \texttt{attn\_factors} is set (as in not \texttt{None}), the entries in $\mathbf{A}$ are weighed by the distance factor, to prioritize attention to nearby nodes. That is, the update step becomes $\mathbf{A}^*_{n} \leftarrow \mathrm{clamp}(\max (f_{n}\mathbf{A}^*_{n-1}\cdot \mathbf{A},\  \mathbf{A}^*_{n-1}),\ 1)$, and this is repeated till convergence, with $f_{n} = 0$ for out-of-range indices.
+    \end{itemize}
 \end{itemize}
 
-\section{Training Objective and Optimization}
-For classification, with logits $z_g=f_\theta(G_g)$ and labels $y_g$, we minimize:
+Precomputing once and caching as a \texttt{PackedGraphBatch} dataclass eliminates expensive per-layer reachability computation in Python.
+
+\subsection{Input Embedding (\texttt{models/full\_model.py})}
+
+For graph classification datasets (\textsf{NCI1}, \textsf{NCI109}, \textsf{OGBG Molpcba}), a single linear layer maps raw node features $\vec{x}_v \in \mathbb{R}^{d_x}$ to $\vec{h}^{(0)}_v \in \mathbb{R}^d$:
 \[
-\mathcal{L}(\theta)=\frac{1}{B}\sum_{g=1}^{B} \mathrm{CE}(z_g,y_g).
-\]
-Training uses Adam-family optimization with optional gradient clipping:
-\[
-\theta \leftarrow \theta - \eta\,\nabla_\theta \mathcal{L}.
+\vec{h}^{(0)}_v =\mathbf{W}_\text{in}\,\vec{x}_v.
 \]
 
-\subsection{FLAG Robust Training}
-FLAG injects adversarial feature perturbations $\delta$ in hidden/node input space:
+For \textsf{OGBG Code2} (Abstract Syntax Trees), node features consist of a discrete node type, a discrete attribute index, and an integer depth. The \texttt{ASTNodeEncoder} module therefore uses three separate embedding tables (type, attribute, depth) and sums their outputs:
 \[
-\delta^{t+1} = \Pi_{\epsilon}\left(\delta^t + \alpha\,\mathrm{sign}(\nabla_\delta \mathcal{L}(\theta,\delta^t))\right).
+\vec{h}^{(0)}_v
+  = E_\text{type}[x_{v,0}]
+  + E_\text{attr}[x_{v,1}]
+  + E_\text{depth}[\min(\delta_v, d_\text{max})],
 \]
-Model parameters are updated against perturbed examples, improving robustness and regularization.
+where $\delta_v$ is the node's depth in the AST, clipped at $d_\text{max}=20$.
+For Code2, the dataset transform also augments the AST edge set with inverse edges and next-token edges before graph packing.
 
-\section{Complexity Discussion}
-Let $n=|V|$, hidden width $d$, edges $m=|E|$.
+The \texttt{[CLS]} token is represented by a learned linear map applied to a fixed ones vector---effectively a learnable bias vector of dimension $d$---with one CLS token appended \emph{after} the node block of each graph in the packed batch.
+
+\subsection{Transformer Block (\texttt{models/transformer.py})}
+
+Each of the $L$ transformer blocks is a \texttt{TransformerLayer} that applies three sublayers with pre-norm residuals:
+\[
+\mathbf{H} \leftarrow \mathbf{H} + \mathrm{Drop}\!\left(\mathrm{GNN}(\mathrm{LN}(\mathbf{H}))\right)
+\]
+\[
+\mathbf{H} \leftarrow \mathbf{H} + \mathrm{Drop}\!\left(\mathrm{Attn}(\mathrm{LN}(\mathbf{H}))\right)
+\]
+\[
+\mathbf{H} \leftarrow \mathbf{H} + \mathrm{Drop}\!\left(\mathrm{MLP}(\mathrm{LN}(\mathbf{H}))\right)
+\]
+where $\mathbf{H} \in \mathbb{R}^{(N+B)\times d}$ holds all node and CLS embeddings for a batch of $B$ graphs with $N$ total nodes.
+
+\subsection{GNN Sublayer (\texttt{models/gnn.py})}
+
+Each \texttt{GNNLayer} is a custom \emph{edge-aware message-passing} step that operates \textbf{only on non-CLS nodes}; CLS positions receive zero output and rely on the residual to carry their values forward. The computation for node $u$ is:
+
+\begin{align*}
+\vec{\tilde{h}}_u\ &=\ \vec{h}_u @ \mathbf{W}_1^\top & &\text{(node transform)} \\
+\vec{e}_{uv}\ &=\ [\vec{\tilde{h}}_u \,\|\, \vec{\tilde{h}}_v] @ \mathbf{W}_2^\top & &\text{(edge embedding from pair)} \\
+\vec{m}_u\ &=\ \textstyle\sum_{v\in\mathcal{N}(u)} \vec{\tilde{h}}_v & &\text{(sum of neighbour transforms)} \\
+\vec{n}_u\ &=\ \textstyle\sum_{v\in\mathcal{N}(u)} \vec{e}_{uv} & &\text{(sum of edge embeddings)} \\
+\vec{h}'_u\ &=\ \mathrm{GELU}\!\left([\vec{\tilde{h}}_u \,\|\, \vec{m}_u \,\|\, \vec{n}_u]\right) @ \mathbf{W}_3^\top & &\text{(aggregate \& project)}
+\end{align*}
+
+Stacking $K$ such layers inside one transformer block gives a $K$-hop local context before attention, following the packed edge orientation used by the implementation.
+
+\subsection{Attention Sublayer (\texttt{models/attention.py})}
+
+Multi-head scaled dot-product attention is applied to \emph{all} tokens (nodes + CLS):
+\[
+a^\ell_{ij} = \frac{\left(\vec{h}_i @ \mathbf{W}_Q^{\ell\top}\right)\left(\vec{h}_j^\top @ \mathbf{W}_K^{\ell\top}\right)}{\sqrt{d_h}},
+\qquad
+\tilde{a}^\ell_{ij} = a^\ell_{ij} + \log A^*_{ij},
+\qquad
+\vec{h}'_i = \sum_j \mathrm{softmax}_j(\tilde{a}^\ell_{i\cdot}) \vec{h}_j @ \mathbf{W}_V^{\ell\top},
+\]
+where $A^*_{ij} \in [0,1]$ is the precomputed reachability entry. Because $\log 0 = -\infty$, unreachable pairs are effectively masked out. The CLS token is bidirectionally connected to every node in its graph (set explicitly in \texttt{pack\_graph\_batch}), so it can attend to---and be attended by---all nodes. Cross-graph attention is prevented by the block-diagonal structure of $\mathbf{A}^*$.
+The multi-head outputs are concatenated and passed through a final linear output projection.
+
+\paragraph{Optional distance-weighted attention.}
+The config parameter \texttt{attn\_distance\_factors} (a list of per-hop scale factors) allows replacing the binary reachability mask with a soft, distance-decayed version: nodes $k$ hops away contribute with factor $f_k$. In our experiments this is set to \texttt{None}, giving binary transitive-closure reachability with no distance decay.
+
+\subsection{MLP Sublayer (\texttt{models/mlp.py})}
+
+A position-wise two-layer feedforward network with GELU activation is applied after attention. A key implementation detail: the \texttt{MLP} module maintains \textbf{two independent sets of weights}---\texttt{layers} for regular nodes and \texttt{layers\_cls} for the CLS token. This lets the model learn different transformations for the graph-summary token versus per-node representations, without coupling their learning dynamics.
+
+\subsection{Output Head}
+
+After $L$ transformer blocks, the CLS embedding $\vec{h}_\text{cls} \in \mathbb{R}^d$ is extracted and passed through the output head:
 \begin{itemize}
-    \item GNN layer cost is typically $\mathcal{O}(m d)$.
-    \item Full attention cost is $\mathcal{O}(n^2 d)$ in time and $\mathcal{O}(n^2)$ in memory for attention scores.
+  \item \emph{Classification} (\textsf{NCI}, \textsf{OGBG MolPCBA}): $\hat{y} = \mathbf{W}_\text{out}\,\vec{h}_\text{cls}$, $\mathbf{W}_\text{out}\!\in\!\mathbb{R}^{d \times C}$.
+  \item \emph{Sequence prediction} (\textsf{OGBG Code2}): $\hat{y}_t = \mathbf{W}^{(t)}_\text{out}\,\vec{h}_\text{cls}$ for $t = 1,\ldots, T_\text{max}$, using $T_\text{max}$ independent linear heads.
 \end{itemize}
-Hence, hybrid architectures trade better long-range modeling for higher cost on large graphs.
 
-\section{Benchmarks and Experimental Scope}
-Configuration files indicate evaluation on OGBG-Code2, OGBG-MolPCBA, NCI1, and NCI109 with multiple variants (GCN/GIN/PNA with and without virtual node settings).
+%──────────────────────────────────────────────────────────────────
+\section{Training Objective and Optimization (\texttt{models/train.py})}
+%──────────────────────────────────────────────────────────────────
 
+\paragraph{Loss.}
+For graph classification with batch size $B$:
+\[
+\mathcal{L}(\theta) = \frac{1}{B}\sum_{g=1}^{B} \mathrm{CE}(f_\theta(G_g), y_g).
+\]
+For Code2, cross-entropy is averaged over all sequence positions:
+\[
+\mathcal{L}(\theta) = \frac{1}{B\cdot T}\sum_{g=1}^{B}\sum_{t=1}^{T} \mathrm{CE}(\hat{y}^{(g)}_t, y^{(g)}_t).
+\]
+
+\paragraph{Optimizer and scheduler.}
+All experiments use Adam with $(\beta_1,\beta_2) = (0.9, 0.999)$. A cosine-annealing LR schedule (\texttt{CosineAnnealingLR}) with $T_\text{max} = $ \#epochs is applied unless disabled. During training, the best model state by validation metric is kept in memory and restored before reporting test results; \texttt{main.py} then saves checkpoints to disk.
+
+\paragraph{Multi-run protocol.}
+\texttt{run\_graph\_transformer\_experiments} trains $R$ independent runs with different seeds. Final results are reported as mean $\pm$ std of test metrics across runs. Exact reproducibility can still depend on hardware backend and nondeterministic PyTorch/CUDA kernels.
+
+\subsection{FLAG Adversarial Training (\texttt{trainers/flag\_trainer.py})}
+
+The repository contains a FLAG~\cite{kong2020flag} trainer, which augments training by injecting adversarial perturbations $\delta$ into node embeddings, computed via $m$ projected gradient steps:
+\[
+\delta^{t+1} = \Pi_{\|\cdot\|_\infty \leq \epsilon}\!\left(\delta^t + \alpha\,\mathrm{sign}(\nabla_\delta \mathcal{L}(\theta,\delta^t))\right),
+\]
+with step size $\alpha$ (default $8\times10^{-3}$) and $m=3$ steps. However, this trainer is not used by the current \texttt{models/train.py} GraphTransLWG training loop, and it expects a model interface with an explicit perturbation input. We therefore treat it as auxiliary repository code rather than part of the main reported experiments.
+
+% %──────────────────────────────────────────────────────────────────
+% \section{Complexity Analysis}
+% %──────────────────────────────────────────────────────────────────
+
+% Let $N = |V|$ be the total non-CLS nodes in a batch, $B$ the number of graphs, $V=N+B$ the total packed tokens including CLS tokens, $M = |E|$ the total edges, $d$ the embedding dimension, $L$ the number of transformer layers, and $K$ the GNN layers per block.
+
+% \begin{center}
+% \begin{tabular}{lll}
+% \toprule
+% \textbf{Component} & \textbf{Time} & \textbf{Space} \\
+% \midrule
+% Batch packing (once) & $O(V^3 \cdot D)$ & $O(V^2)$ \\
+% GNN sublayer (per block) & $O((M + N) \cdot d \cdot K)$ & $O(V d)$ \\
+% Attention sublayer (per block) & $O(V^2 d)$ & $O(V^2 + V d)$ \\
+% MLP sublayer (per block) & $O(V d^2)$ & $O(V d)$ \\
+% \midrule
+% Total per forward pass & $O(V^3D + L V^2 d)$ & $O(V^2)$ \\
+% \bottomrule
+% \end{tabular}
+% \end{center}
+
+% Here $D$ is the number of fixed-point iterations needed for the transitive closure. In the implementation, each closure iteration uses dense matrix multiplication on the packed $V\times V$ mask, so the one-time packing cost is cubic in the number of packed tokens. This cost is paid once per batch and $A^*$ is reused across all $L$ layers; after packing, the per-layer dominant term is dense attention, $O(V^2d)$. Code2 has about 125 nodes per graph on average, but with batch size 16 the packed token count is much larger than a single graph, so dense masks and attention are the main scalability bottlenecks.
+
+%──────────────────────────────────────────────────────────────────
+\section{Implementation Summary}
+%──────────────────────────────────────────────────────────────────
+
+\begin{itemize}
+  \item \texttt{models/full\_model.py}: \texttt{GraphTransConfig} (hyperparameter dataclass), \texttt{GraphTransModel} (full pipeline), \texttt{ASTNodeEncoder} (code2 input), \texttt{ModelTrainConfig} (training config).
+  \item \texttt{models/gnn.py}: \texttt{GNNLayer} (edge-aware single layer), \texttt{GNN} (stack of GNN layers).
+  \item \texttt{models/attention.py}: \texttt{AttentionLayer} (reachability-masked attention with optional distance factors).
+  \item \texttt{models/mlp.py}: \texttt{MLP} (position-wise FFN with separate CLS weights).
+  \item \texttt{models/transformer.py}: \texttt{TransformerLayer} (GNN + Attn + MLP with pre-norm residuals), \texttt{Transformer} (stack).
+  \item \texttt{models/batch\_utils.py}: \texttt{PackedGraphBatch}, \texttt{pack\_graph\_batch}, \texttt{build\_attn\_factors} (precomputation of $\mathbf{A}^*$, the CLS mask and the batch edge embedding for reuse).
+  \item \texttt{models/train.py}: \texttt{train\_graph\_transformer}, \texttt{run\_graph\_transformer\_experiments} \\ (multi-run training loop with tracking of mean and standard deviation of a metric, and the loss).
+  \item \texttt{data\_utils/config\_objects.py}: per-dataset \texttt{GraphTransConfig} and \texttt{ModelTrainConfig} instances.
+  \item \texttt{data\_utils/code2\_train\_config.py}: code2-specific config factory (\texttt{ASTNodeEncoder} setup, vocab building, F1 metric).
+  \item \texttt{code2\_gnn\_initialization\_ablation/configs.py}: config factories for the \textsf{Code2} dataset --  GNN-only/frozen-GNN/fine-tuned-GNN ablation -- kept as auxiliary code.
+  \item \texttt{nci\_readout\_ablation/model.py}, \texttt{nci\_readout\_ablation/main.py}: ablation code for \textsf{NCI1}/\textsf{NCI109} variants.
+  \item \texttt{trainers/flag\_trainer.py}: auxiliary FLAG adversarial perturbation trainer, not used in the main \texttt{models/train.py} loop.
+\end{itemize}
+
+%──────────────────────────────────────────────────────────────────
+\section{Experiments}
+%──────────────────────────────────────────────────────────────────
+
+\subsection{Biological Benchmarks (\textsf{NCI1} \& \textsf{NCI109})}
+
+\paragraph{Dataset.}
+\textsf{NCI1} and \textsf{NCI109} each contain ${\approx}4{,}000$ graphs (${\approx}30$ nodes on average) representing biochemical compounds. The task is binary classification: predicting anti-lung-cancer activity. We follow prior work and split 8:1:1 (train/val/test) with random seeds.
+
+\paragraph{Our experimental setup.}
+\textit{50 epochs}, batch size \textit{128}, Adam ($\beta_1{=}0.9$, $\beta_2{=}0.999$), lr $= 10^{-4}$, weight decay $= 10^{-4}$, cosine annealing schedule, \textit{5 independent runs}
+Architecture: 4 transformer layers; per block: 3 GNN layers, 8-head attention (head dim 16), 2-layer MLP (hidden 512); embed dim 128; dropout 0.1.
+
+\begin{table}[h]
+\centering
+\caption{NCI1 and NCI109 test accuracy (\%). Paper baselines reproduced from~\cite{wu2021representing} }
+\label{tab:nci}
+\begin{tabular}{lccrr}
+\toprule
+\textbf{Model} & \textbf{GNN Type} & \textbf{GNN layers} & \textbf{NCI1 (\%)} & \textbf{NCI109 (\%)} \\
+\midrule
+Set2Set~\cite{vinyals2016order}   & GCN & 3 & $68.6\pm1.9$ & $69.8\pm1.2$ \\
+SortPool~\cite{zhang2018end}      & GCN & 3 & $73.8\pm1.0$ & $74.0\pm1.2$ \\
+SAGPool$_h$~\cite{lee2019self}    & GCN & 3 & $67.5\pm1.1$ & $67.9\pm1.4$ \\
+SAGPool$_g$~\cite{lee2019self}    & GCN & 3 & $74.2\pm1.2$ & $74.1\pm0.8$ \\
+\midrule
+Errica et al.~\cite{errica2020fair}     & GIN & 8 & $80.0\pm1.4$ & --- \\
+Alon \& Yahav~\cite{alon2021bottleneck} & GIN & 8 & $81.5\pm1.2$ & --- \\
+\midrule
+Transformer~\cite{vaswani2017attention}      & --- & --- & $68.5\pm2.6$ & $70.1\pm2.3$ \\
+\midrule
+GraphTrans (small)~\cite{wu2021representing} & GCN & 3   & $81.3\pm1.9$ & $79.2\pm2.2$ \\
+GraphTrans (large)~\cite{wu2021representing} & GIN & 4   & $\mathbf{82.6\pm1.2}$ & $\mathbf{82.3\pm2.6}$ \\
+\midrule
+\textbf{GraphTransLWG (ours)} & custom & $3^\dagger$
+  & $\mathbf{78.59\pm1.79}$ & $\mathbf{76.47\pm1.42}$ \\
+\bottomrule
+\end{tabular}
+\smallskip\\
+{\footnotesize $^\dagger$GNN layers per transformer block (3 layers $\times$ 4 blocks = 12 total GNN applications); baselines report total backbone GNN layers.}
+\end{table}
+
+\subsection{Computer Programming Benchmark (\textsf{OGBG Code2})}
+
+\paragraph{Dataset.}
+\texttt{ogbg-code2} contains 45{,}741 graphs---Abstract Syntax Trees of Python method bodies---with 125 nodes on average. The task is sequence prediction: given the AST, predict the sub-tokens of the method name. Performance is measured by token-level F1 score using the OGB evaluator. We use the standard fixed OGB splits.
+
+\paragraph{Our experimental setup.}
+\textit{30 epochs}, batch size \textit{16}, Adam, lr $= 10^{-4}$, weight decay $= 0$, cosine annealing schedule, \textit{5 independent runs}.
+Architecture: 4 transformer layers; per block: 4 GNN layers, 6-head attention (head dim 50), 2-layer MLP (hidden 600); embed dim 300; dropout 0.3. Input via \texttt{ASTNodeEncoder} (node-type + attribute + depth embeddings summed). Output: $T_\text{max}=5$ independent linear heads over vocabulary.
+
+% \begin{table}[h]
+% \centering
+% \caption{OGB Code2 valid/test F1 score. Baselines from OGB leaderboard~\cite{hu2020ogb}. Our result to be filled in~\textcolor{blue}{blue}.}
+% \label{tab:code2}
+% \begin{tabular}{lrr}
+% \toprule
+% \textbf{Model} & \textbf{Valid F1} & \textbf{Test F1} \\
+% \midrule
+% GIN~\cite{xu2019powerful}             & $0.1376\pm0.0016$ & $0.1495\pm0.0023$ \\
+% GCN~\cite{kipf2017semi}               & $0.1399\pm0.0017$ & $0.1507\pm0.0018$ \\
+% GIN-Virtual~\cite{xu2019powerful}     & $0.1439\pm0.0026$ & $0.1581\pm0.0020$ \\
+% GCN-Virtual~\cite{kipf2017semi}       & $0.1461\pm0.0013$ & $0.1595\pm0.0018$ \\
+% PNA~\cite{corso2020principal}         & $0.1453\pm0.0025$ & $0.1570\pm0.0032$ \\
+% DAGNN~\cite{thost2021directed}        & $0.1607\pm0.0040$ & $0.1751\pm0.0049$ \\
+% \midrule
+% Transformer~\cite{vaswani2017attention}            & $0.1546\pm0.0018$ & $0.1670\pm0.0015$ \\
+% \midrule
+% GraphTrans (GCN)~\cite{wu2021representing}         & $0.1599\pm0.0009$ & $0.1751\pm0.0015$ \\
+% GraphTrans (PNA)~\cite{wu2021representing}         & $0.1622\pm0.0025$ & $0.1765\pm0.0033$ \\
+% GraphTrans (GCN-Virtual)~\cite{wu2021representing} & $\mathbf{0.1661\pm0.0012}$ & $\mathbf{0.1830\pm0.0024}$ \\
+% \midrule
+% \textbf{GraphTransLWG (ours)} & \textcolor{blue}{0.1735\mp0.03} & \textcolor{blue}{??} \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+\begin{table}[H]
+\centering
+\caption{OGB Code2 \textbf{validation} F1 score. Baselines from OGB leaderboard~\cite{hu2020ogb} (originally reported on the test set; our result is validation F1 only, so direct comparison should be interpreted with caution).}
+\label{tab:code2}
+\begin{tabular}{lr}
+\toprule
+\textbf{Model} & \textbf{Mean F1 $\pm$ std dev} \\
+\midrule
+GIN~\cite{xu2019powerful}             & $0.1376\pm0.0016$ \\
+GCN~\cite{kipf2017semi}               & $0.1399\pm0.0017$ \\
+GIN-Virtual~\cite{xu2019powerful}     & $0.1439\pm0.0026$ \\
+GCN-Virtual~\cite{kipf2017semi}       & $0.1461\pm0.0013$ \\
+PNA~\cite{corso2020principal}         & $0.1453\pm0.0025$ \\
+DAGNN~\cite{thost2021directed}        & $0.1607\pm0.0040$ \\
+\midrule
+Transformer~\cite{vaswani2017attention} & $0.1546\pm0.0018$ \\
+\midrule
+GraphTrans (GCN)~\cite{wu2021representing}         & $0.1599\pm0.0009$ \\
+GraphTrans (PNA)~\cite{wu2021representing}         & $0.1622\pm0.0025$ \\
+GraphTrans (GCN-Virtual)~\cite{wu2021representing} & ${0.1661\pm0.0012}$ \\
+\midrule
+\textbf{GraphTransLWG (ours)} & $\mathbf{0.1735\pm0.03}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+\subsection{Ablation: Effectiveness of \texttt{[CLS]} Embedding on \textsf{NCI1}}
+
+\paragraph{Setup.}
+We perform an ablation study on different Transformer readout strategies to analyze how graph-level representations should be extracted from the output token sequence. The compared readout strategies are:
+(1)~\textbf{mean}: average all node (non-CLS) output embeddings to obtain one graph embedding;
+(2)~\textbf{last}: use the last output embedding as the graph embedding;
+(3)~\textbf{\texttt{[CLS]}}: append a learnable \texttt{[CLS]} token and use its final embedding as the graph representation;
+and (4)~\textbf{\texttt{[CLS]}, cat}: concatenate the final \texttt{[CLS]} embedding with the mean of the final node embeddings before prediction.
+
+This ablation evaluates whether a dedicated graph-summary token can aggregate graph-level information more effectively than standard pooling operations.
+
+\paragraph{\textsc{GraphTransLWG} setup.}
+The experiments are conducted on the \textsf{NCI1} dataset using our \textsc{GraphTransLWG} architecture. Each configuration was evaluated across multiple random seeds, and we report the mean and standard deviation of the test accuracy.
+
+\begin{table}[h]
+\centering
+\caption{Ablation of readout strategies on NCI1 using \textsc{GraphTransLWG}.}
+\label{tab:ablation}
+\begin{tabular}{lr}
+\toprule
+\textbf{Readout} & \textbf{Test Accuracy (\%)} \\
+\midrule
+\texttt{[CLS]} & $79.72 \pm 3.22$ \\
+mean & $81.51 \pm 1.58$ \\
+last & $81.59 \pm 2.85$ \\
+\texttt{[CLS]}, cat & $\mathbf{81.67 \pm 2.11}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The quantitative results show that the vanilla \texttt{[CLS]} readout performs worse than the alternative aggregation strategies, achieving only $79.72\%$ test accuracy. In contrast, both mean pooling and last-token pooling achieve comparable performance above $81.5\%$. The best result is obtained using the concatenated \texttt{[CLS]} variant, which achieves $81.67\%$ test accuracy.
+
+These observations suggest that while a standalone \texttt{[CLS]} token may not sufficiently capture graph-level structure in \textsc{GraphTransLWG}, augmenting it with a pooled node-level summary significantly improves representation quality. Overall, the \texttt{[CLS]}, cat strategy provides the most effective graph-level aggregation among the evaluated methods.
+
+
+%──────────────────────────────────────────────────────────────────
 \section{Conclusion}
-This project establishes a technical and reproducible foundation for graph representation learning with GraphTrans-style hybrids. The key benefit is combining local inductive bias from message passing with global receptive fields from attention.
+%──────────────────────────────────────────────────────────────────
+
+We implemented \textsc{GraphTransLWG}, a GraphTrans-style architecture~\cite{wu2021representing} with several implementation-level contributions: (i) a custom edge-aware GNN layer that incorporates pairwise edge embeddings alongside neighbour aggregation; (ii) transitive-closure-based attention masking precomputed once per batch and reused across all $L$ transformer blocks; (iii) separate MLP weights for the \texttt{[CLS]} token; and (iv) a pre-norm residual structure throughout. Experiments on \textsf{NCI1}, \textsf{NCI109}, and \textsf{OGB Code2} compare our implementation against standard baselines, while the readout ablation (Table~\ref{tab:ablation}) evaluates how different graph-summary strategies affect \textsc{GraphTransLWG}.
+
+
+\begin{thebibliography}{99}
+\bibitem{wu2021representing} Z.~Wu, P.~Jain, M.~A.~Wright, A.~Mirhoseini, J.~E.~Gonzalez, I.~Stoica. Representing Long-Range Context for Graph Neural Networks with Global Attention. \textit{NeurIPS 2021}.
+\bibitem{vaswani2017attention} A.~Vaswani et al. Attention is All You Need. \textit{NeurIPS 2017}.
+\bibitem{xu2019powerful} K.~Xu, W.~Hu, J.~Leskovec, S.~Jegelka. How Powerful are Graph Neural Networks? \textit{ICLR 2019}.
+\bibitem{kipf2017semi} T.~N.~Kipf, M.~Welling. Semi-Supervised Classification with Graph Convolutional Networks. \textit{ICLR 2017}.
+\bibitem{corso2020principal} G.~Corso et al. Principal Neighbourhood Aggregation for Graph Nets. \textit{NeurIPS 2020}.
+\bibitem{thost2021directed} V.~Thost, J.~Chen. Directed Acyclic Graph Neural Networks. \textit{ICLR 2021}.
+\bibitem{hu2020ogb} W.~Hu et al. Open Graph Benchmark: Datasets for Machine Learning on Graphs. \textit{NeurIPS 2020}.
+\bibitem{lee2019self} J.~Lee, I.~Lee, J.~Kang. Self-Attention Graph Pooling. \textit{ICML 2019}.
+\bibitem{vinyals2016order} O.~Vinyals, S.~Bengio, M.~Kudlur. Order Matters: Sequence to Sequence for Sets. \textit{ICLR 2016}.
+\bibitem{zhang2018end} M.~Zhang, Z.~Cui, M.~Neumann, Y.~Chen. An End-to-End Deep Learning Architecture for Graph Classification. \textit{AAAI 2018}.
+\bibitem{errica2020fair} F.~Errica, M.~Podda, D.~Bacciu, A.~Micheli. A Fair Comparison of Graph Neural Networks for Graph Classification. \textit{ICLR 2020}.
+\bibitem{alon2021bottleneck} U.~Alon, E.~Yahav. On the Bottleneck of Graph Neural Networks and its Practical Implications. \textit{ICLR 2021}.
+\bibitem{kong2020flag} K.~Kong, G.~Li, M.~Ding, Z.~Wu, C.~Zhu, B.~Ghanem, G.~Taylor, T.~Goldstein. FLAG: Adversarial Data Augmentation for Graph Neural Networks. \textit{arXiv 2020}.
+\end{thebibliography}
 
 \end{document}

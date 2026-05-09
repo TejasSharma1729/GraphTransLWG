@@ -27,21 +27,17 @@ from dataclasses import asdict
 import torch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(os.path.dirname(_HERE))   # GraphTransLWG/
+_ROOT = os.path.dirname(os.path.dirname(_HERE)) 
 sys.path.insert(0, _ROOT)
 
-from data_utils.code2_tokenization import build_code2_dataset          # noqa: E402
-from code2_gnn_initialization_ablation.train import run_experiment          # noqa: E402
-from code2_gnn_initialization_ablation.configs import (                     # noqa: E402
-    get_gnn_only_config,
-    get_frozen_gnn_config,
-    get_finetune_gnn_config,
-)
+from data_utils.code2_tokenization import build_code2_dataset 
+from code2_gnn_initialization_ablation.train import run_experiment 
+from code2_gnn_initialization_ablation.configs import get_gnn_only_config, get_frozen_gnn_config, get_finetune_gnn_config
 
 
 def _device():
     import torch.cuda as _c, torch.mps as _m
-    return torch.device("cuda" if _c.is_available() else "mps" if _m.is_available() else "cpu")
+    return torch.device("cuda" if _c.is_available() else "mps" if _m.is_available() else "cpu") # type: ignore
 
 
 def main():
@@ -70,7 +66,7 @@ def main():
     device = _device()
     print(f"Device: {device}", flush=True)
 
-    # ── load dataset (shared across all rows) ────────────────────────────────
+    # load dataset (shared across all rows) 
     (
         dataset, train_idx, val_idx, test_idx,
         vocab2idx, idx2vocab,
@@ -91,7 +87,7 @@ def main():
         dtype             = torch.float32,
     )
 
-    # ── build kwargs for run_experiment ──────────────────────────────────────
+    # build kwargs for run_experiment
     common = dict(
         num_epochs    = args.num_epochs,
         batch_size    = args.batch_size,
@@ -100,21 +96,21 @@ def main():
     )
 
     if args.row == "gnn_only":
-        print("\n── Row 1: GNN-only baseline ──────────────────────────────────", flush=True)
+        print("\n-- Row 1: GNN-only baseline ----------------------------------", flush=True)
         kw = get_gnn_only_config(dataset_info, **common)
 
     elif args.row == "frozen_gnn":
-        print("\n── Row 2: GraphTrans – pre-trained + frozen GNN ──────────────", flush=True)
+        print("\n-- Row 2: GraphTrans – pre-trained + frozen GNN --------------", flush=True)
         kw = get_frozen_gnn_config(dataset_info, args.pretrained, **common)
 
     else:  # finetune_gnn
-        print("\n── Row 3: GraphTrans – pre-trained + fine-tuned GNN ──────────", flush=True)
+        print("\n-- Row 3: GraphTrans – pre-trained + fine-tuned GNN ----------", flush=True)
         kw = get_finetune_gnn_config(dataset_info, args.pretrained, **common)
 
-    # ── run ──────────────────────────────────────────────────────────────────
+    # run
     experiment = run_experiment(**kw)
 
-    # ── save checkpoints ─────────────────────────────────────────────────────
+    # save checkpoints
     os.makedirs(args.save_path, exist_ok=True)
     for run_id, result in enumerate(experiment.results):
         fname = os.path.join(args.save_path, f"{args.row}_run{run_id}.pt")
@@ -134,7 +130,7 @@ def main():
         )
         print(f"Saved {fname}", flush=True)
 
-    # ── final summary ─────────────────────────────────────────────────────────
+    # final summary
     print(
         f"\n{'='*60}\n"
         f"Row: {args.row}\n"

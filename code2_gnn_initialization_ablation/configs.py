@@ -21,19 +21,13 @@ import torch
 from torch.nn import Module
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(os.path.dirname(_HERE))   # GraphTransLWG/
+_ROOT = os.path.dirname(os.path.dirname(_HERE)) 
 sys.path.insert(0, _ROOT)
 
-from models.full_model import GraphTransConfig, GraphTransModel   # noqa: E402
-from code2_gnn_initialization_ablation.gnn_only_model import GNNOnlyModel             # noqa: E402
-from data_utils.code2_train_config import (                                   # noqa: E402
-    code2_out_mapping_fn, code2_loss_fn, _make_metric_fn,
-)
+from models.full_model import GraphTransConfig, GraphTransModel
+from code2_gnn_initialization_ablation.gnn_only_model import GNNOnlyModel
+from data_utils.code2_train_config import code2_out_mapping_fn, code2_loss_fn, _make_metric_fn,
 
-
-# -----------------------------------------------------------------------------
-# GNN weight transfer helpers
-# -----------------------------------------------------------------------------
 
 def load_gnn_weights_into_graphtrans(
     graphtrans_model: GraphTransModel,
@@ -77,10 +71,6 @@ def freeze_gnn_layers(model: GraphTransModel) -> None:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Frozen {frozen:,} GNN params. Trainable: {trainable:,}", flush=True)
 
-
-# -----------------------------------------------------------------------------
-# Config builders
-# -----------------------------------------------------------------------------
 
 def _base_config(dataset_info: Dict[str, Any]) -> GraphTransConfig:
     """Build the shared GraphTransConfig for all three rows."""

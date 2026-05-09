@@ -23,10 +23,6 @@ from torch_geometric.data import Data
 from tqdm import tqdm
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Result dataclasses (mirrors models/train.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
 @dataclass
 class RunResult:
     model: Module
@@ -44,10 +40,6 @@ class ExperimentResult:
     mean_test_metric: float
     std_test_metric: float
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _make_batches(indices: List[int], batch_size: int) -> Iterable[List[int]]:
     for start in range(0, len(indices), batch_size):
@@ -81,9 +73,7 @@ def _evaluate(
     return total_loss / n, total_metric / n
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Public API
-# ─────────────────────────────────────────────────────────────────────────────
+# ------- PUBLIC API BELOW -------
 
 def train_one_run(
     model: Module,

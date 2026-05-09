@@ -18,6 +18,7 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import torch
 from torch import Tensor
+from torch.utils.data import Dataset as TorchDataset
 from torch_geometric.data import Data
 
 # reach root so absolute imports work when this file is run directly
@@ -30,10 +31,6 @@ from data_utils.extract_datasets import get_graph_dataset  # noqa: E402
 NUM_VOCAB   = 5000
 MAX_SEQ_LEN = 5
 
-
-# -----------------------------------------------------------------------------
-# Vocabulary helpers
-# -----------------------------------------------------------------------------
 
 def get_vocab_mapping(seq_list: List[List[str]], num_vocab: int) -> Tuple[Dict[str, int], List[str]]:
     """
@@ -84,10 +81,6 @@ def decode_arr_to_seq(arr: Tensor, idx2vocab: List[str]) -> List[str]:
     return [idx2vocab[int(i)] for i in arr.cpu()]
 
 
-# -----------------------------------------------------------------------------
-# Edge augmentation  (matches reference GraphTrans implementation)
-# -----------------------------------------------------------------------------
-
 def augment_edge(data: Data) -> Data:
     """
     Augment AST edge_index with:
@@ -120,11 +113,9 @@ def augment_edge(data: Data) -> Data:
     return data
 
 
-# -----------------------------------------------------------------------------
-# Full dataset builder
-# -----------------------------------------------------------------------------
+Code2DatasetReturnType = Tuple[TorchDataset[Data], List[int], List[int], List[int], Dict[str, int], List[str], int, int]
 
-def build_code2_dataset(max_graphs: int | None = None):
+def build_code2_dataset(max_graphs: int | None = None) -> Code2DatasetReturnType:
     """
     Download (or load cached) ogbg-code2, build vocabulary from training set,
     and register the on-the-fly transform.
@@ -153,7 +144,7 @@ def build_code2_dataset(max_graphs: int | None = None):
     val_idx   = split_idx["valid"].tolist()
     test_idx  = split_idx["test"].tolist()
 
-    # -- optional subsampling --------------------------------------------------
+    # optional subsampling
     if max_graphs is not None:
         import random as _random
         # Use random shuffle with fixed seed so subsamples are representative.

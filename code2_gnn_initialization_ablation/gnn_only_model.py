@@ -19,10 +19,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))   # GraphTransLWG/
 sys.path.insert(0, _ROOT)
 
-from torch_geometric.data import Data                                           # noqa: E402
-from models.gnn import GNN                                                      # noqa: E402
-from models.batch_utils import PackedGraphBatch, build_cls_mask, pack_edge_index # noqa: E402
-from models.full_model import GraphTransConfig, ASTNodeEncoder                  # noqa: E402
+from torch_geometric.data import Data 
+from models.gnn import GNN 
+from models.batch_utils import PackedGraphBatch, build_cls_mask, pack_edge_index
+from models.full_model import GraphTransConfig, ASTNodeEncoder
 
 
 def _pack_gnn_batch(graphs: List[Data], device: torch.device, dtype: torch.dtype) -> PackedGraphBatch:
@@ -66,7 +66,7 @@ class GNNOnlyModel(Module):
             config.num_node_types is not None and config.max_seq_len is not None
         )
 
-        # ── input encoder ─────────────────────────────────────────────────────
+        #  input encoder 
         if self._is_code2:
             assert config.num_node_types and config.num_node_attrs
             self.input_embedding: Module = ASTNodeEncoder(
@@ -78,7 +78,7 @@ class GNNOnlyModel(Module):
         else:
             self.input_embedding = nn.Linear(config.x_dim, config.embed_dim)
 
-        # ── GNN ───────────────────────────────────────────────────────────────
+        #  GNN 
         num_layers = (
             config.num_gnn_layers
             if isinstance(config.num_gnn_layers, int)
@@ -86,7 +86,7 @@ class GNNOnlyModel(Module):
         )
         self.gnn = GNN(config.embed_dim, num_layers, config.device, config.dtype)
 
-        # ── output head(s) ────────────────────────────────────────────────────
+        #  output head(s) 
         if self._is_code2:
             assert config.max_seq_len and config.num_vocab
             self.output_layer: Module = nn.ModuleList([
@@ -126,7 +126,7 @@ class GNNOnlyModel(Module):
 
         # GNN forward (returns 0 for CLS positions)
         gnn_out     = self.gnn(batch, input_emb)       # [total_v, embed_dim]
-        non_cls_out = gnn_out[~batch.cls_mask]          # [total_nodes, embed_dim]
+        non_cls_out = gnn_out[~batch.cls_mask]         # [total_nodes, embed_dim]
 
         # Global mean pool per graph
         graph_emb_list: List[Tensor] = []
