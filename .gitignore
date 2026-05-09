@@ -147,3 +147,9 @@ data/
 dataset/
 datasets/
 *.out
+
+# LaTeX report
+*.tex
+*.aux
+*.log
+*.synctex.gz
