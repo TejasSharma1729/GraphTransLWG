@@ -14,16 +14,13 @@ from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_dense_batch, coalesce
 from torch_geometric.datasets import TUDataset
 
-from data_utils.config_objects import DATASET_CONFIGS, TRAIN_CONFIGS
-from models.full_model import ModelTrainConfig
-from models.train import ExperimentResult, run_graph_transformer_experiments
-
 REPO_ROOT: str = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(REPO_ROOT)
 
-from models import GNNLayer, GNN, AttentionLayer, MLP, TransformerLayer, Transformer, GraphTransConfig, GraphTransModel
 from data_utils import get_graph_dataset, load_tudataset_as_torch_dataset, save_dataset_as_pt, PyGAsTorchDataset
-
+from data_utils.config_objects import DATASET_CONFIGS, TRAIN_CONFIGS
+from models.full_model import GraphTransConfig, GraphTransModel, ModelTrainConfig
+from models.train import ExperimentResult, run_graph_transformer_experiments
 
 
 if __name__ == "__main__":

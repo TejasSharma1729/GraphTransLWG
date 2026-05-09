@@ -39,12 +39,14 @@ class AttentionLayer(Module):
         Initialize the attention layer.
 
         Args:
-            embed_dim: The embedding dimension
-            num_heads: The number of attention heads
-            head_dim: The dimension of each attention head
-            attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
-            device: The device to run the layer on
-            dtype: The data type to use for the layer (default: torch.bfloat16)
+            embed_dim: The input and output embedding dimension.
+            num_heads: The number of attention heads.
+            head_dim: The dimension of each individual attention head.
+            attn_distance_factors: Attention distance factors for weighted neighbourhood attention;
+                None means binary reachability masking (attend equally to all reachable nodes).
+            dropout: Dropout probability applied to attention weights.
+            device: The device to run the layer on.
+            dtype: The data type to use for the layer parameters (default: torch.bfloat16).
         """
         super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings

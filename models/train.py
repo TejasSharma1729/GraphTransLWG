@@ -32,6 +32,17 @@ from models.full_model import GraphTransConfig, GraphTransModel, ModelTrainConfi
 
 @dataclass
 class TrainingResult:
+    """
+    Data structure to hold results of a full training run, 
+    including the trained model and metrics at best validation and final test.
+
+    Args:
+        model: The trained GraphTransModel after training is complete.
+        best_val_metric: The best validation metric achieved during training.
+        test_metric_at_best_val: The test metric corresponding to the epoch with the best validation metric.
+        final_test_metric: The test metric after loading the best model at the end of training.
+        seed: The random seed used for this training run, for reproducibility.
+    """
     model: GraphTransModel
     best_val_metric: float
     test_metric_at_best_val: float
@@ -41,6 +52,16 @@ class TrainingResult:
 
 @dataclass
 class ExperimentResult:
+    """
+    Data structure to hold results of multiple training runs (with different seeds) for an experiment,
+    including the list of individual training results and the mean and std of the test metric across runs.
+    This is intended for one dataset (one model, and one config), multiple full runs.
+
+    Args:
+        results: A list of TrainingResult objects, one for each run with a different random seed
+        mean_test_metric: The mean of the test metric across all runs, computed from test_metric_at_best_val in each TrainingResult
+        std_test_metric: The standard deviation of the test metric across all runs, computed from test_metric_at_best_val in each TrainingResult
+    """
     results: List[TrainingResult]
     mean_test_metric: float
     std_test_metric: float
@@ -52,6 +73,18 @@ def _split_indices(
     val_ratio: float,
     seed: int,
 ) -> Tuple[List[int], List[int], List[int]]:
+    """
+    Split the dataset indices into train, validation, and test sets.
+
+    Args:
+        dataset_size: The total number of samples in the dataset.
+        train_ratio: The proportion of samples to use for training.
+        val_ratio: The proportion of samples to use for validation.
+        seed: The random seed for reproducibility.
+
+    Returns:
+        A tuple containing the indices for the train, validation, and test sets.
+    """
     generator = torch.Generator().manual_seed(seed)
     indices = torch.randperm(dataset_size, generator=generator).tolist()
     train_size = int(dataset_size * train_ratio)
@@ -63,6 +96,17 @@ def _split_indices(
 
 
 def _default_metric(output: Tensor, target: Tensor) -> float:
+    """
+    The default accuracy metric function, 1 if the largest predicted value and corresponds to
+    the target value, and 0 otherwise (multiclass vs true integer class labels).
+
+    If the output has dimension 1, we check if the target (now floating tensor) >= 0.5 corresponds to
+    the sigmoid of the output being above 0.5, and the metric returns 1 if they match, 0 otherwise.
+
+    Args:
+        output: The output tensor from the model, of shape float[num_samples, num_classes] (multiclass) or float[num_samples]
+        target: The ground truth tensor, of shape long[num_samples] (multiclass) or float[num_samples]
+    """
     if output.ndim == 2 and output.shape[1] > 1 and target.dtype in (torch.int64, torch.long):
         pred = output.argmax(dim=1)
         return float((pred == target.view(-1)).float().mean().item())
@@ -76,6 +120,16 @@ def _default_metric(output: Tensor, target: Tensor) -> float:
 
 
 def _make_batches(indices: List[int], batch_size: int) -> Iterable[List[int]]:
+    """
+    Generator, that yields batches of indices given a list of indices and a batch size.
+
+    Args:
+        indices: The list of indices to batch.
+        batch_size: The size of each batch.
+    
+    Yields:
+        Batches of indices, as lists of integers (one at a time).
+    """
     for start in range(0, len(indices), batch_size):
         yield indices[start:start + batch_size]
 
@@ -87,6 +141,19 @@ def _evaluate(
     indices: List[int],
     config: ModelTrainConfig,
 ) -> Tuple[float, float]:
+    """
+    Runs a batched evaluation loop on the GraphTransModel, on a dataset, in eval mode.
+    It returns the loss and the metric averaged across the given indices.
+
+    Args:
+        model: The GraphTransModel to evaluate, which should already be in eval mode.
+        dataset: The dataset to evaluate on, as a PyTorch Dataset object.
+        indices: The list of indices to evaluate on (e.g. val or test indices).
+        config: The ModelTrainConfig containing the out_mapping_fn, loss_fn, and metric_fn to use for evaluation.
+    
+    Returns:
+        A tuple of (average_loss, average_metric) across the given indices.
+    """
     model.eval()
     total_loss = 0.0
     total_metric = 0.0
@@ -95,7 +162,7 @@ def _evaluate(
 
     for batch_indices in _make_batches(indices, config.batch_size):
         samples: List[Data] = [dataset[i] for i in batch_indices] # type: ignore
-        batch: List[Data] = [pt.to(device=device) for pt in samples]
+        batch: List[Data] = [pt.to(device=str(device)) for pt in samples]
         ground_truth: Tensor = config.out_mapping_fn(samples).to(device=device)
         output: Tensor = model(batch)
         loss: Tensor = config.loss_fn(output, ground_truth)
@@ -114,17 +181,16 @@ def train_graph_transformer(
         run_id: int | None = None,
 ) -> TrainingResult:
     """
-    Train the Graph Transformer model on the given dataset.
+    Train the Graph Transformer model on the given dataset, a single run.
+    The config encapsulates all necessary information for training, 
+    including model and dataset loaders, hyperparameters, and functions for loss and metric computation.
 
     Args:
-        model: The GraphTransModel to train
-        dataset: The dataset to train on, as a PyTorch Dataset object
-        out_mapping_fn: A function that maps the output of the model to the ground truth output features for the loss function. 
-            This is necessary since the model outputs a tensor of shape [num_graphs, y_dim] but ground truth may be inhomogeneous lists.
-        loss_fn: The loss function to use for training, as a function that takes in the model output and ground truth and returns a scalar loss tensor.
-        num_epochs: The number of epochs to train for (default: 1)
-        batch_size: The batch size to use for training (default: 8)
-        learning_rate: The learning rate to use for training (default: 0.0001)
+        config: The ModelTrainConfig containing all necessary information for training.
+        run_id: An optional identifier for the training run, used for logging purposes (e.g. "Run 1", "Run 2", etc.)
+    
+    Returns:
+        A TrainingResult object containing the trained model and metrics at best validation and final test.
     """
     random.seed(config.random_seed)
     np.random.seed(config.random_seed)
@@ -174,7 +240,7 @@ def train_graph_transformer(
         for batch_indices in _make_batches(shuffled_train_indices, config.batch_size):
             optimizer.zero_grad()
             samples: List[Data] = [dataset[i] for i in batch_indices] # type: ignore
-            batch: List[Data] = [pt.to(device=device) for pt in samples]
+            batch: List[Data] = [pt.to(device=str(device)) for pt in samples]
             ground_truth: Tensor = config.out_mapping_fn(samples).to(device=device)
             output: Tensor = model(batch)
             loss: Tensor = config.loss_fn(output, ground_truth)
@@ -227,6 +293,19 @@ def train_graph_transformer(
 
 
 def run_graph_transformer_experiments(config: ModelTrainConfig) -> ExperimentResult:
+    """
+    Runs multilple training runs on the Graph Transformer model, with different random seeds, 
+    and returns an ExperimentResult containing the list of TrainingResults and the mean and std of the test metric across runs.
+    The config encapsulates all necessary information for training, including model and dataset loaders, hyperparameters, 
+    and functions for loss and metric computation. 
+    It also contains the number of runs and the random seed to use as a base for all runs (the seed for each run is config.random_seed + run_id).
+
+    Args:
+        config: The ModelTrainConfig containing all necessary information for training.
+    
+    Returns:
+        An ExperimentResult containing the list of TrainingResults and the mean and std of the test metric
+    """
     results: List[TrainingResult] = []
     for run_id in range(config.runs):
         run_config = copy.copy(config)

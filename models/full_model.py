@@ -52,25 +52,42 @@ class ASTNodeEncoder(Module):
 @dataclass
 class GraphTransConfig:
     """
-    Class that stores the configuration for the GraphTransModel. 
+    Class that stores the configuration for the GraphTransModel.
     This is used to initialize the model, and also to store the hyperparameters for the model.
 
     Note that instances of this must be created for each dataset (and pertain to a GNN for the dataset).
 
     Args:
-        x_dim: The dimension of the input vertex features
-        num_transformer_layers: The number of transformer layers in the transformer module
-        embed_dim: The embedding dimension
-        num_heads: The number of attention heads in the attention layers
-        head_dim: The dimension of each attention head in the attention layers
-        y_dim: The dimension of the output features
-        num_gnn_layers: The number of gnn layers in each transformer layer of the transformer module
-        attn_distance_factors: The attention distance factors for each transformer layer of the transformer module (hyperparameters for weighing attention)
-        num_mlp_layers: The number of mlp layers in each transformer layer of the transformer module
-        mlp_hidden_dim: Hidden dimension inside the transformer feedforward/MLP subnetwork.
-        dropout: Dropout used in transformer attention and residual branches.
-        device: The device to run the model on
-        dtype: The data type to use for the model (default: torch.float32)
+        x_dim: The dimension of the input vertex features (standard mode only; ignored in code2 mode).
+        num_transformer_layers: The number of transformer layers in the transformer module.
+        embed_dim: The embedding dimension used throughout the model.
+        num_heads: The number of attention heads in each attention layer.
+        head_dim: The dimension of each individual attention head.
+        y_dim: The dimension of the output features (standard mode only; ignored in code2 mode).
+        num_gnn_layers: The number of GNN layers inside each TransformerLayer. A single int is
+            broadcast to all layers; a list of ints (length num_transformer_layers) sets each
+            layer individually.
+        attn_distance_factors: Per-layer attention distance factors for weighted neighbourhood
+            attention. None means uniform binary reachability masking for all layers. If provided,
+            must be a list of length num_transformer_layers where each element is either None or a
+            list of floats.
+        num_mlp_layers: The number of MLP layers inside each TransformerLayer. Same broadcast
+            rules as num_gnn_layers.
+        mlp_hidden_dim: Hidden dimension of the feedforward MLP inside each TransformerLayer.
+            Defaults to embed_dim when None.
+        dropout: Dropout probability applied in transformer attention and residual branches.
+        num_node_types: Number of distinct AST node types. Must be set for ogbg-code2 to enable
+            ASTNodeEncoder instead of nn.Linear for input embeddings. None in standard mode.
+        num_node_attrs: Number of distinct AST node attribute values. Must be set alongside
+            num_node_types for ogbg-code2. None in standard mode.
+        max_node_depth: Maximum AST node depth supported by the depth embedding table in
+            ASTNodeEncoder; depths beyond this are clamped (default: 20).
+        max_seq_len: Length of the output token sequence. Must be set for ogbg-code2 to enable
+            a ModuleList of max_seq_len independent linear prediction heads. None in standard mode.
+        num_vocab: Vocabulary size, i.e. number of output classes per sequence position. Must be
+            set alongside max_seq_len for ogbg-code2. None in standard mode.
+        device: The device to run the model on.
+        dtype: The data type to use for the model parameters (default: torch.float32).
     """
     x_dim: int = 2  
     num_transformer_layers: int = 6
@@ -111,10 +128,25 @@ class GraphTransModel(Module):
             config: GraphTransConfig
     ) -> None:
         """
-        Initialize the GraphTransModel given the configuration.
+        Initialize the GraphTransModel from the given configuration.
+
+        Depending on whether config is in code2 mode (config.num_node_types is not None and
+        config.max_seq_len is not None), two different architectures are constructed:
+
+        Standard mode:
+            - input_embedding: nn.Linear(x_dim → embed_dim)
+            - output_layer:    nn.Linear(embed_dim → y_dim)
+
+        code2 mode (ogbg-code2 AST sequence prediction):
+            - input_embedding: ASTNodeEncoder(embed_dim, num_node_types, num_node_attrs, max_node_depth)
+            - output_layer:    nn.ModuleList of max_seq_len independent nn.Linear(embed_dim → num_vocab) heads
+
+        In both modes a shared Transformer stack and a learnable CLS token embedding are constructed.
 
         Args:
-            config: The configuration for the model, as a GraphTransConfig object (required).
+            config: The full model configuration. See GraphTransConfig for all fields and their
+                meaning. All architectural choices (layer counts, dimensions, dropout, device, dtype,
+                and code2 vs. standard mode) are read from this object.
         """
         super().__init__()
         self.config: GraphTransConfig = config
@@ -161,17 +193,17 @@ class GraphTransModel(Module):
     ) -> Tensor:
         """
         Forward pass for a batch of graphs or a single graph.
-        This computes the output features for all vertices of all graphs in the batch, in order.
 
-        It first computes the input embeddings from the input vertex features,
-        then applies the transformer to get the output embeddings, 
-        and finally applies the output layer to get the output features.
+        Packs inputs into a PackedGraphBatch, computes per-node embeddings (ASTNodeEncoder in
+        code2 mode, nn.Linear otherwise), prepends a learned CLS embedding to each graph, runs
+        all transformer layers, then applies the output head(s) to each graph's CLS token.
 
         Args:
-            input_graphs: The input graphs (or a single graph)
-        
+            input_graphs: One or more PyG Data objects. A single Data is silently wrapped in a list.
+
         Returns:
-            The output features (Tensor).
+            Standard mode: Tensor of shape [num_graphs, y_dim].
+            code2 mode:    Tensor of shape [num_graphs, max_seq_len, num_vocab].
         """
         if isinstance(input_graphs, Data):
             input_graphs = [input_graphs]
@@ -184,11 +216,11 @@ class GraphTransModel(Module):
 
         # Node embeddings: use ASTNodeEncoder for code2, else nn.Linear
         if self._is_code2:
-            x_int   = torch.cat([g.x          for g in input_graphs], dim=0).long().to(self.device)
+            x_int   = torch.cat([g.x for g in input_graphs], dim=0).long().to(self.device) # type: ignore
             x_depth = torch.cat([g.node_depth.view(-1) for g in input_graphs], dim=0).long().to(self.device)
             input_embeddings[~batch.cls_mask] = self.input_embedding(x_int, x_depth).to(self.dtype)
         else:
-            x_tensor = torch.cat([g.x for g in input_graphs], dim=0).to(device=self.device, dtype=self.dtype)
+            x_tensor = torch.cat([g.x for g in input_graphs], dim=0).to(device=self.device, dtype=self.dtype) # type: ignore
             input_embeddings[~batch.cls_mask] = self.input_embedding(x_tensor)
 
         input_embeddings[batch.cls_mask] = self.cls_embedding(cls_tensor)

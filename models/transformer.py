@@ -48,14 +48,19 @@ class TransformerLayer(Module):
         Initialize the transformer layer.
 
         Args:
-            embed_dim: The embedding dimension
-            num_heads: The number of attention heads
-            head_dim: The dimension of each attention head
-            num_gnn_layers: The number of gnn layers in the gnn layer
-            attn_distance_factors: The attention distance factors (hyperparameters for weighing attention)
-            num_mlp_layers: The number of MLP layers in the MLP layer
-            device: The device to run the layer on
-            dtype: The data type to use for the layer (default: torch.bfloat16)
+            embed_dim: The input and output embedding dimension.
+            num_heads: The number of attention heads in the attention submodule.
+            head_dim: The dimension of each individual attention head.
+            num_gnn_layers: The number of stacked GNN layers inside the GNN submodule.
+            attn_distance_factors: Attention distance factors for weighted neighbourhood attention;
+                None means binary reachability masking (attend equally to all reachable nodes).
+            num_mlp_layers: The number of linear layers in the feedforward MLP submodule.
+            mlp_hidden_dim: Hidden dimension of the MLP feedforward network; defaults to embed_dim
+                when None.
+            dropout: Dropout probability applied after each of the GNN, attention, and MLP
+                sub-blocks (pre-norm residual style).
+            device: The device to run the layer on.
+            dtype: The data type to use for the layer parameters (default: torch.bfloat16).
         """
         super().__init__()
         self.embed_dim: int = embed_dim # dimension of the input and output embeddings
@@ -129,14 +134,22 @@ class Transformer(Module):
         Initialize the transformer.
 
         Args:
-            num_layers: The number of transformer layers
-            embed_dim: The embedding dimension
-            num_heads: The number of attention heads
-            head_dim: The dimension of each attention head
-            num_gnn_layers: The number of gnn layers in the gnn layer per layer
-            attn_distance_factors: The attention distance factors (hyperparameters for weighing attention) per layer
-            num_mlp_layers: The number of MLP layers in the MLP layer per layer
-            device: The device to run the layer on
+            num_layers: The number of TransformerLayers to stack.
+            embed_dim: The input and output embedding dimension shared across all layers.
+            num_heads: The number of attention heads in each attention submodule.
+            head_dim: The dimension of each individual attention head.
+            num_gnn_layers: The number of GNN layers per TransformerLayer. A single int is
+                broadcast to all layers; a list of ints (length num_layers) sets each individually.
+            attn_distance_factors: Per-layer attention distance factors. None means binary
+                reachability masking for all layers. If provided, must be a list of length
+                num_layers where each element is either None or a list of floats.
+            num_mlp_layers: The number of MLP layers per TransformerLayer. Same broadcast rules
+                as num_gnn_layers.
+            mlp_hidden_dim: Hidden dimension of the feedforward MLP inside each TransformerLayer;
+                defaults to embed_dim when None.
+            dropout: Dropout probability applied inside each TransformerLayer.
+            device: The device to run the transformer on.
+            dtype: The data type to use for all layer parameters (default: torch.bfloat16).
         """
         super().__init__()
         self.num_layers: int = num_layers # number of transformer layers

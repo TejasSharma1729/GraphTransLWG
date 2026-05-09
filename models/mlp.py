@@ -39,10 +39,11 @@ class MLP(Module):
         Initialize the MLP.
 
         Args:
-            embed_dim: The embedding dimension
-            num_layers: The number of layers in the MLP
-            device: The device to run the MLP on
-            dtype: The data type to use for the layer (default: torch.bfloat16)
+            embed_dim: The input and output embedding dimension.
+            num_layers: The number of linear layers (must be ≥ 1).
+            hidden_dim: Hidden dimension for intermediate layers; defaults to embed_dim when None.
+            device: The device to run the MLP on.
+            dtype: The data type to use for the layer parameters (default: torch.bfloat16).
         """
         super().__init__()
         if num_layers < 1:

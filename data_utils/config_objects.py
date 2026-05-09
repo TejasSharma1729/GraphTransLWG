@@ -108,7 +108,7 @@ def masked_bce_with_logits(pred_logits: Tensor, target: Tensor) -> Tensor:
 
 
 def graph_targets(graphs: List[Data]) -> Tensor:
-    return torch.stack([graph.y.reshape(-1) for graph in graphs], dim=0)
+    return torch.stack([graph.y.reshape(-1) for graph in graphs], dim=0) # type: ignore
 
 
 def graph_class_targets(graphs: List[Data]) -> Tensor:
